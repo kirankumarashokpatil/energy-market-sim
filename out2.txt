@@ -1,0 +1,3 @@
+﻿≡ƒÜÇ Starting Gridforge multiplayer test...
+Room code: TEST6697
+[HostNESO] Navigating to http://localhost:5173
