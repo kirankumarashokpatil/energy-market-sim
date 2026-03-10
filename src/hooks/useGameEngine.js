@@ -41,6 +41,19 @@ export function useGameEngine(appState, playerRefs, setters, callbacks) {
    */
   const handlePhaseTransition = useCallback(async (oldPhase, oldSp, gun, room, isInstructor) => {
     if (!market || !ak) return;
+    // Diagnostic log for phase transition sync
+    console.log('[GameEngine] handlePhaseTransition:', { oldPhase, oldSp, room, isInstructor });
+    if (gun && room) {
+      console.log('[GameEngine] GunDB sync state:', {
+        gunReady: !!gun,
+        room,
+        market,
+        players,
+        spContracts,
+        phase,
+        sp
+      });
+    }
 
     const myDef = { ...ASSETS[ak], ...(playerRefs.assetConfig || {}) };
     const isGenerator = myDef.kind && ["thermal", "wind", "solar", "hydro"].includes(myDef.kind);
@@ -51,6 +64,9 @@ export function useGameEngine(appState, playerRefs, setters, callbacks) {
       const daArr = [...Object.values(daOrderbookSnap || {}).filter(b => b && b.mw)];
       const daRes = clearDA(daArr, market.forecast);
       const mine = daRes.accepted_bids.find(a => a.id === pid);
+
+      // Diagnostic log for DA phase
+      console.log('[GameEngine] DA phase:', { daArr, daRes, mine });
 
       if (mine) {
         // BUG-008 FIX: use daRes.cp (not myDef.daPrice which doesn't exist)
@@ -77,6 +93,8 @@ export function useGameEngine(appState, playerRefs, setters, callbacks) {
     if (oldPhase === "BM") {
       const bmArr = [...Object.values(orderbookSnap || {}).filter(b => b && b.mw)];
       const res = clearBM(bmArr, market.actual);
+      // Diagnostic log for BM phase
+      console.log('[GameEngine] BM phase:', { bmArr, res });
       setMarket(prev => ({ ...prev, actual: feedbackMarketState(prev.actual, res) }));
       const mine = res.accepted.find(a => a.id === pid);
 
@@ -111,6 +129,9 @@ export function useGameEngine(appState, playerRefs, setters, callbacks) {
       const myC = spContracts[oldSp]?.[pid] || {};
       const contractPosMw = contractPosition || 0;
       const actualPosMw = myC.bmAccepted ? (market.actual.isShort ? myC.bmAccepted.mw : -myC.bmAccepted.mw) : 0;
+
+      // Diagnostic log for SETTLED phase
+      console.log('[GameEngine] SETTLED phase:', { myC, contractPosMw, actualPosMw, marketActual: market.actual });
 
       let intendedPhysical = myC.bmAccepted
         ? (market.actual.isShort ? myC.bmAccepted.mw : -myC.bmAccepted.mw)
