@@ -215,13 +215,6 @@
 | 220 | 0.8 | multiplier | SBP discount for BM | YES |
 | 220 | 1.2 | multiplier | SSP markup for BM | YES |
 
-### InterconnectorScreen.jsx Hardcoded Values
-| Line | Value | Type | Context | Should Extract |
-|------|-------|------|---------|-----------------|
-| 13 | 50 | £/MWh | baseRef default | YES |
-| 45 | 0.03 | fraction | Loss factor (3%) | YES - Asset-specific, check definitions |
-| 67 | 1000 | MW | Max IC capacity sample | YES - Use from ASSETS.IC_* |
-
 ### NESOScreen.jsx Hardcoded Values
 | Line | Value | Type | Context | Should Extract |
 |------|-------|------|---------|-----------------|

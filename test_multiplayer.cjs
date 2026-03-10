@@ -38,7 +38,7 @@ const ROLES = [
     { name: 'PowerSupply', roleLabel: 'Supplier', isHost: false, needsAsset: true, assetType: 'BRITISH_GAS' },
     { name: 'TraderJoe', roleLabel: 'Trader', isHost: false, needsAsset: false, assetType: null },
     { name: 'DSR_Agg', roleLabel: 'DSR', isHost: false, needsAsset: true, assetType: 'DSR' },
-    { name: 'IC_Link', roleLabel: 'Interconnector', isHost: false, needsAsset: true, assetType: 'IC_IFA' },
+    // interconnector is now system-managed; no player browser needed
     { name: 'BatteryCo', roleLabel: 'BESS', isHost: false, needsAsset: true, assetType: 'BESS_M' },
 ];
 

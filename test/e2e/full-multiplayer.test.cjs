@@ -25,8 +25,9 @@
  */
 
 const puppeteer = require('puppeteer');
+const { spawn } = require('child_process');
 
-const BASE_URL = process.env.GRIDFORGE_URL || 'http://localhost:5174';
+const BASE_URL = process.env.GRIDFORGE_URL || 'http://localhost:5173';
 const ROOM_CODE = 'TEST' + Date.now().toString().slice(-6);
 const HEADLESS = process.env.HEADLESS !== 'false';
 
@@ -38,8 +39,12 @@ const HEADLESS = process.env.HEADLESS !== 'false';
 //   - Supplier (no asset, hedging demand)
 const ROLES = [
     { name: 'NESO_Op', roleLabel: 'System Operator', isHost: true, needsAsset: false, assetType: null },
-    { name: 'GenCo', roleLabel: 'Generator', isHost: false, needsAsset: true, assetType: 'OCGT' },
+    { name: 'GenCo', roleLabel: 'Generator', isHost: false, needsAsset: true, assetType: 'Gas Peaker' },
     { name: 'PowerSupply', roleLabel: 'Supplier', isHost: false, needsAsset: false, assetType: null },
+    { name: 'Elexon_Admin', roleLabel: 'Elexon', isHost: false, needsAsset: false, assetType: null },
+    { name: 'HedgeFund', roleLabel: 'Trader', isHost: false, needsAsset: false, assetType: null },
+    { name: 'BatteryCo', roleLabel: 'Battery Storage', isHost: false, needsAsset: true, assetType: 'Grid BESS' },
+    { name: 'DemandCo', roleLabel: 'Demand Controller', isHost: false, needsAsset: true, assetType: 'Demand Response' }
 ];
 
 // ─── Test results tracker ─────────────────────────────────────────────────
@@ -120,6 +125,72 @@ async function selectTab(page, tabLabel) {
     await sleep(400);
 }
 
+// Wait for a specific phase tab to be active (e.g., 'DAY-AHEAD', 'INTRADAY')
+async function waitForPhase(page, phaseLabel, timeout = 30000) {
+    // Check for the phase pill in SharedLayout or a button/tab that contains the text
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+        const hasPhase = await page.evaluate((label) => {
+            // Check body text (handles most cases including the hidden <span> used for tests)
+            if (document.body.textContent.includes(label)) return true;
+
+            // Explicitly look for the phase pill by its visual text representation
+            const pills = Array.from(document.querySelectorAll('div, span'));
+            if (pills.some(el => el.textContent.toUpperCase() === `📋 ${label.toUpperCase()}` ||
+                el.textContent.toUpperCase() === `🤝 ${label.toUpperCase()}` ||
+                el.textContent.toUpperCase() === `⚡ ${label.toUpperCase()}`)) {
+                return true;
+            }
+            return false;
+        }, phaseLabel);
+        if (hasPhase) return;
+        await sleep(500);
+    }
+    const htmlSnippet = await page.evaluate(() => document.body.textContent.slice(0, 300));
+    throw new Error(`waitForPhase timed out for ${phaseLabel} - snippet: ${htmlSnippet}`);
+}
+
+/**
+ * Starts the local Gun relay server and waits for it to be ready.
+ * Returns the child process object so it can be killed later.
+ */
+function startGunRelay() {
+    return new Promise((resolve, reject) => {
+        console.log('  [Setup] Starting local Gun relay server...');
+        const relay = spawn('node', ['gun-relay.cjs'], {
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        let started = false;
+
+        // Listen for the specific startup message
+        relay.stdout.on('data', (data) => {
+            const output = data.toString();
+            if (!started && output.includes('Gun relay server running')) {
+                started = true;
+                console.log('  [Setup] Gun relay server is ready.');
+                resolve(relay);
+            }
+        });
+
+        relay.stderr.on('data', (data) => {
+            const output = data.toString();
+            if (output.toLowerCase().includes('error')) {
+                console.error('  [Relay Error]', output);
+            }
+        });
+
+        relay.on('error', (err) => {
+            if (!started) reject(err);
+            else console.error('  [Relay Process Error]', err);
+        });
+
+        relay.on('exit', (code) => {
+            if (!started && code !== 0) reject(new Error(`Gun relay exited with code ${code}`));
+        });
+    });
+}
+
 // ─── Join flow (exactly as in WaitingRoom.jsx) ─────────────────────────────
 async function joinGame(page, cfg, retries = 2) {
     const { name, roleLabel, isHost, needsAsset, assetType } = cfg;
@@ -130,7 +201,11 @@ async function joinGame(page, cfg, retries = 2) {
 
         // Wait for network connection
         console.log(`[${name}] Waiting for network connection…`);
-        await waitFor(page, () => document.body.textContent.includes('Network Connected'), 30000);
+        await waitFor(page, () =>
+            document.body.textContent.includes('Network Connected') ||
+            document.body.textContent.includes('Join Session'),
+            30000
+        );
 
         // Fill name
         await typeInto(page, 'e.g. Alice', name);
@@ -244,7 +319,41 @@ async function joinGame(page, cfg, retries = 2) {
 
 // ─── NESO actions ─────────────────────────────────────────────────────────
 async function nesoPublishForecast(page) {
+    // wait for button
+    try {
+        await page.waitForSelector('button[data-testid="publish-forecast"]', { timeout: 10000 });
+    } catch (e) {
+        await page.screenshot({ path: 'neso-error.png', fullPage: true });
+        const html = await page.evaluate(() => document.body.innerHTML);
+        console.log('[NESO Debug] Body HTML snapshot saved. Length:', html.length);
+        throw new Error('Failed to find publish-forecast button. See neso-error.png: ' + e.message);
+    }
     await clickButton(page, 'PUBLISH FORECAST');
+    await sleep(2000); // Give GunDB a moment to sync to peers
+
+    // Click "START SIMULATION" or "ADVANCE PHASE →" on NESO's screen explicitly.
+    try {
+        const buttonsAndStates = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('button')).map(b => ({
+                text: b.textContent,
+                disabled: b.disabled
+            }));
+        });
+        console.log('   [NESO Debug] Available buttons:', JSON.stringify(buttonsAndStates, null, 2));
+
+        await page.waitForFunction(() => {
+            const btns = Array.from(document.querySelectorAll('button:not([disabled])'));
+            const advance = btns.find(b => b.textContent.includes('START SIMULATION') || b.textContent.includes('ADVANCE PHASE'));
+            if (advance) {
+                advance.click();
+                return true;
+            }
+            return false;
+        }, { timeout: 15000 });
+        await sleep(2000);
+    } catch (e) {
+        throw new Error('Could not click advance phase after publish forecast: ' + e.message);
+    }
 }
 
 async function nesoAdvanceToPhase(page, phaseText) {
@@ -307,12 +416,12 @@ async function supSubmitID(page) {
 
 // Trader
 async function traderSubmitDA(page) { await selectTab(page, 'DAY-AHEAD'); await clickButton(page, 'BUY (Go Long)'); await fillNumber(page, 0, 30); await fillNumber(page, 1, 52); await clickButton(page, 'SUBMIT SPECULATIVE POSITION'); }
-async function traderSubmitID(page) { await selectTab(page, 'INTRADAY'); await clickButton(page, 'SELL POSITION'); await fillNumber(page, 0, 15); await fillNumber(page, 1, 58); await clickButton(page, 'SUBMIT TO ORDERBOOK'); }
+async function traderSubmitID(page) { await selectTab(page, 'INTRADAY'); await clickButton(page, 'SELL (Go Short)'); await fillNumber(page, 0, 15); await fillNumber(page, 1, 55); await clickButton(page, 'SUBMIT ID ORDER'); }
 
 // DSR
 async function dsrSubmitDA(page) { await selectTab(page, 'DAY-AHEAD'); await clickButton(page, 'SELL (Curtail Demand)'); await fillNumber(page, 0, 20); await fillNumber(page, 1, 30); await clickButton(page, 'SUBMIT DA SCHEDULE'); }
 async function dsrSubmitID(page) { await selectTab(page, 'INTRADAY'); await clickButton(page, 'SELL (Curtail Demand)'); await fillNumber(page, 0, 10); await fillNumber(page, 1, 35); await clickButton(page, 'SUBMIT ID ORDER'); }
-async function dsrSubmitBM(page) { await fillNumber(page, 0, 15); await fillNumber(page, 1, 40); await clickButton(page, 'SUBMIT'); }
+async function dsrSubmitBM(page) { await fillNumber(page, 0, 15); await fillNumber(page, 1, 40); await page.click('button[data-testid="dsr-submit-bm"]'); await sleep(200); }
 
 // Interconnector (only BM)
 async function icSubmitBM(page) { await fillNumber(page, 0, 100); await fillNumber(page, 1, 80); await clickButton(page, 'SUBMIT'); }
@@ -320,12 +429,12 @@ async function icSubmitBM(page) { await fillNumber(page, 0, 100); await fillNumb
 // BESS
 async function bessSubmitDA(page) { await selectTab(page, 'DAY-AHEAD'); await clickButton(page, 'SELL (Discharge Battery)'); await fillNumber(page, 0, 40); await fillNumber(page, 1, 50); await clickButton(page, 'SUBMIT DA SCHEDULE'); }
 async function bessSubmitID(page) { await selectTab(page, 'INTRADAY'); await clickButton(page, 'BUY (Charge Battery)'); await fillNumber(page, 0, 20); await fillNumber(page, 1, 48); await clickButton(page, 'SUBMIT ID ORDER'); }
-async function bessSubmitBM(page) { await fillNumber(page, 0, 30); await fillNumber(page, 1, 65); await clickButton(page, 'SUBMIT'); }
+async function bessSubmitBM(page) { await fillNumber(page, 0, 30); await fillNumber(page, 1, 65); await page.click('button[data-testid="bess-submit-bm"]'); await sleep(200); }
 
 // ─── Verification helpers ─────────────────────────────────────────────────
 async function getCurrentSP(page) {
     return page.evaluate(() => {
-        const m = document.body.textContent.match(/SP\s*(\d+)\s*\/\s*48/);
+        const m = document.body.textContent.match(/SP\s*:?\s*(\d+)\s*\/\s*48/);
         return m ? parseInt(m[1], 10) : null;
     });
 }
@@ -349,16 +458,19 @@ async function getPnL(page) {
 // ─── Main test runner ─────────────────────────────────────────────────────
 (async () => {
     console.log('══════════════════════════════════════════════════════════');
-    console.log('  GRIDFORGE – Full Multiplayer E2E Test (3 core roles)');
+    console.log('  GRIDFORGE – Full Multiplayer E2E Test (ALL 7 Roles)');
     console.log(`  Room: ${ROOM_CODE}  |  Server: ${BASE_URL}`);
     console.log('══════════════════════════════════════════════════════════\n');
 
+    let gunRelayProcess = null;
     const browsers = [];
     const pages = [];
 
     try {
+        gunRelayProcess = await startGunRelay();
+
         // ── Join all players ────────────────────────────────────────────
-        console.log('\n─── Phase 0: Join Core Players ─────────────────────');
+        console.log('\n─── Phase 0: Join All Players ──────────────────────');
         for (let i = 0; i < ROLES.length; i++) {
             const cfg = ROLES[i];
             try {
@@ -387,12 +499,28 @@ async function getPnL(page) {
 
         // ── Initial sync check ──────────────────────────────────────────
         console.log('\n─── Initial Sync Check ───────────────────────────────');
-        const sps = await Promise.all(pages.map(getCurrentSP));
-        if (sps.every(sp => sp !== null)) pass('All players have SP indicator');
-        else fail('SP indicator check', new Error(`SPs: ${sps}`));
+
+        // Wait for SP to be broadcast and rendered by all players
+        for (let i = 0; i < pages.length; i++) {
+            console.log(`   Waiting for SP indicator on ${ROLES[i].name}...`);
+            try {
+                await waitFor(pages[i], () => {
+                    const m = document.body.textContent.match(/SP\s*:?\s*(\d+)\s*\/\s*48/);
+                    return m !== null;
+                }, 20000);
+            } catch (err) {
+                const text = await pages[i].evaluate(() => document.body.textContent);
+                console.error(`[SYNC FAILURE] ${ROLES[i].name} missing SP indicator. Page text preview:`, text.substring(0, 500));
+                await pages[i].screenshot({ path: `sync_fail_${ROLES[i].name}.png` });
+                fail(`SP indicator missing on ${ROLES[i].name}`, err);
+            }
+        }
+        pass('All players have SP indicator');
 
         // ── NESO publishes forecast ─────────────────────────────────────
         console.log('\n─── NESO Publishes Forecast ──────────────────────────');
+        console.log('   Waiting 3s for GunDB P2P mesh to stabilize across 7 clients...');
+        await sleep(3000);
         try {
             await nesoPublishForecast(pages[0]); // pages[0] is NESO
             pass('NESO published forecast');
@@ -401,11 +529,29 @@ async function getPnL(page) {
         // ── DA Phase ────────────────────────────────────────────────────
         console.log('\n─── Phase 1: Day-Ahead (DA) ─────────────────────────');
 
-        // Submit DA bids (Generator + Supplier only for core flow).
+        // Wait for DA phase to sync on non-NESO players
+        console.log('   Waiting for DA phase to sync to all players...');
+        for (let i = 1; i < pages.length; i++) {
+            try {
+                if (ROLES[i].name === 'Elexon_Admin') continue; // Elexon doesn't map to DA/ID explicitly in tabs
+                await waitForPhase(pages[i], 'DAY-AHEAD');
+                pass(`${ROLES[i].name}: DA phase synced`);
+            } catch (e) { fail(`${ROLES[i].name}: DA phase sync`, e); }
+        }
+        await sleep(1000);
+
+        // Submit DA bids
         // We rely on the internal game state machine to already be in
         // DAY-AHEAD; tabs are selected explicitly inside helpers.
-        try { await genSubmitDA(pages[1]); pass('Generator DA'); } catch (e) { fail('Generator DA', e); }
+        try { await genSubmitDA(pages[1]); pass('Generator DA'); } catch (e) {
+            await pages[1].screenshot({ path: 'generator_da_fail.png' });
+            fail('Generator DA', e);
+        }
         try { await supSubmitDA(pages[2]); pass('Supplier DA'); } catch (e) { fail('Supplier DA', e); }
+        // Elexon[3] does not submit DA bids
+        try { await traderSubmitDA(pages[4]); pass('Trader DA'); } catch (e) { fail('Trader DA', e); }
+        try { await bessSubmitDA(pages[5]); pass('BESS DA'); } catch (e) { fail('BESS DA', e); }
+        try { await dsrSubmitDA(pages[6]); pass('DSR DA'); } catch (e) { fail('DSR DA', e); }
 
         // ── ID Phase ────────────────────────────────────────────────────
         console.log('\n─── Phase 2: Intraday (ID) ──────────────────────────');
@@ -418,7 +564,8 @@ async function getPnL(page) {
         console.log('   Waiting for ID phase to sync to all players...');
         for (let i = 1; i < pages.length; i++) {
             try {
-                await waitFor(pages[i], () => document.body.textContent.includes('Intraday'), 30000);
+                if (ROLES[i].name === 'Elexon_Admin') continue;
+                await waitForPhase(pages[i], 'INTRADAY');
                 pass(`${ROLES[i].name}: ID phase synced`);
             } catch (e) { fail(`${ROLES[i].name}: ID phase sync`, e); }
         }
@@ -426,6 +573,10 @@ async function getPnL(page) {
 
         try { await genSubmitID(pages[1]); pass('Generator ID'); } catch (e) { fail('Generator ID', e); }
         try { await supSubmitID(pages[2]); pass('Supplier ID'); } catch (e) { fail('Supplier ID', e); }
+        // Elexon[3] does not submit ID bids
+        try { await traderSubmitID(pages[4]); pass('Trader ID'); } catch (e) { fail('Trader ID', e); }
+        try { await bessSubmitID(pages[5]); pass('BESS ID'); } catch (e) { fail('BESS ID', e); }
+        try { await dsrSubmitID(pages[6]); pass('DSR ID'); } catch (e) { fail('DSR ID', e); }
 
         // ── BM Phase ────────────────────────────────────────────────────
         console.log('\n─── Phase 3: Balancing Mechanism (BM) ───────────────');
@@ -434,15 +585,21 @@ async function getPnL(page) {
             pass('BM phase reached (NESO)');
         } catch (e) { fail('BM phase reached', e); }
 
-        // Wait for phase sync on Generator before BM submission
-        console.log('   Waiting for BM phase to sync to Generator...');
-        try {
-            await waitFor(pages[1], () => document.body.textContent.includes('Balancing'), 30000);
-            pass('GenCo: BM phase synced');
-        } catch (e) { fail('GenCo: BM phase sync', e); }
+        // Wait for phase sync on relevant players before BM submission
+        console.log('   Waiting for BM phase to sync to players...');
+        const bmRoles = [1, 5, 6]; // Generator, BESS, DSR
+        for (const idx of bmRoles) {
+            try {
+                await waitFor(pages[idx], () => document.body.textContent.includes('BALANCING'), 30000);
+                pass(`${ROLES[idx].name}: BM phase synced`);
+            } catch (e) { fail(`${ROLES[idx].name}: BM phase sync`, e); }
+        }
         await sleep(1000);
 
         try { await genSubmitBM(pages[1]); pass('Generator BM'); } catch (e) { fail('Generator BM', e); }
+        // Supplier[2], Elexon[3], Trader[4] do not participate in BM
+        try { await bessSubmitBM(pages[5]); pass('BESS BM'); } catch (e) { fail('BESS BM', e); }
+        try { await dsrSubmitBM(pages[6]); pass('DSR BM'); } catch (e) { fail('DSR BM', e); }
 
         // ── Settlement Phase ────────────────────────────────────────────
         console.log('\n─── Phase 4: Settlement ─────────────────────────────');
@@ -486,10 +643,14 @@ async function getPnL(page) {
             else fail('Leaderboard count', new Error(`Expected >= ${ROLES.length}, got ${count}`));
         } catch (e) { fail('Leaderboard check', e); }
 
-        // 4. Role‑specific KPI labels for core roles (Generator + Supplier)
+        // 4. Role‑specific KPI labels for asset roles
         const kpiChecks = [
             { idx: 1, name: 'Generator', kpi: 'Profit/MW' },
             { idx: 2, name: 'Supplier', kpi: 'Cost/MWh' },
+            { idx: 3, name: 'Elexon', kpi: 'Net System Imbalance' },
+            { idx: 4, name: 'Trader', kpi: 'Risk-Adjusted Return' },
+            { idx: 5, name: 'BESS', kpi: 'Profit/Cycle' },
+            { idx: 6, name: 'DSR', kpi: 'Revenue/MW Curtailed' },
         ];
         for (const { idx, name, kpi } of kpiChecks) {
             const found = await pages[idx].evaluate(label => document.body.textContent.includes(label), kpi);
@@ -539,6 +700,10 @@ async function getPnL(page) {
         fail('GLOBAL TEST ERROR', globalErr);
     } finally {
         for (const b of browsers) await b.close().catch(() => { });
+        if (gunRelayProcess) {
+            console.log('\n  [Cleanup] Shutting down Gun relay server...');
+            gunRelayProcess.kill('SIGKILL');
+        }
     }
 
     process.exit(results.failed.length > 0 ? 1 : 0);

@@ -12,7 +12,7 @@
  *   Trader                  – DA speculative long, ID close
  *   BESS (Medium)           – DA schedule, ID adjust, BM dispatch
  *   DSR                     – DA schedule, ID adjust, BM curtailment
- *   Interconnector (IFA)    – implicit DA/ID, BM override only
+ *   Interconnector (IFA)    – **no longer a playable role; flows are automatic**
  *
  * Phases tested (4 per SP):
  *   DA  → ID  → BM  → SETTLED
@@ -45,27 +45,27 @@
 const puppeteer = require('puppeteer');
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-const BASE_URL  = process.env.GRIDFORGE_URL || 'http://localhost:5173';
+const BASE_URL = process.env.GRIDFORGE_URL || 'http://localhost:5173';
 const ROOM_CODE = 'COMP' + Date.now().toString().slice(-6);
-const HEADLESS  = process.env.HEADLESS !== 'false';
-const SLOW_MO   = parseInt(process.env.SLOW_MO || '0', 10);
+const HEADLESS = process.env.HEADLESS !== 'false';
+const SLOW_MO = parseInt(process.env.SLOW_MO || '0', 10);
 
 // ─── Role definitions ─────────────────────────────────────────────────────────
 const ROLES = [
-    { name: 'NESO_Op',     roleLabel: 'System Operator',  isHost: true,  needsAsset: false, assetName: null             },
-    { name: 'GenCo',       roleLabel: 'Generator',        isHost: false, needsAsset: true,  assetName: 'OCGT'           },
-    { name: 'PowerSupply', roleLabel: 'Supplier',         isHost: false, needsAsset: false, assetName: null             },
-    { name: 'TraderJoe',   roleLabel: 'Trader',           isHost: false, needsAsset: false, assetName: null             },
-    { name: 'BatteryOp',   roleLabel: 'Battery Storage',  isHost: false, needsAsset: true,  assetName: 'BESS'           },
-    { name: 'FlexLoad',    roleLabel: 'Demand Controller',isHost: false, needsAsset: true,  assetName: 'DSR'            },
-    { name: 'CableLink',   roleLabel: 'Interconnector',   isHost: false, needsAsset: true,  assetName: 'IFA'            },
+    { name: 'NESO_Op', roleLabel: 'System Operator', isHost: true, needsAsset: false, assetName: null },
+    { name: 'GenCo', roleLabel: 'Generator', isHost: false, needsAsset: true, assetName: 'OCGT' },
+    { name: 'PowerSupply', roleLabel: 'Supplier', isHost: false, needsAsset: false, assetName: null },
+    { name: 'TraderJoe', roleLabel: 'Trader', isHost: false, needsAsset: false, assetName: null },
+    { name: 'BatteryOp', roleLabel: 'Battery Storage', isHost: false, needsAsset: true, assetName: 'BESS' },
+    { name: 'FlexLoad', roleLabel: 'Demand Controller', isHost: false, needsAsset: true, assetName: 'DSR' },
+    // Interconnector removed – automatic system asset, not a browser participant
 ];
 
 // ─── Result tracker ──────────────────────────────────────────────────────────
 const results = { passed: [], failed: [], warned: [] };
-function pass(label)        { results.passed.push(label);          console.log(`  ✅ ${label}`); }
-function fail(label, err)   { results.failed.push({label, err});   console.error(`  ❌ ${label}: ${err?.message || err}`); }
-function warn(label, msg)   { results.warned.push({label, msg});   console.warn(`  ⚠️  ${label}: ${msg}`); }
+function pass(label) { results.passed.push(label); console.log(`  ✅ ${label}`); }
+function fail(label, err) { results.failed.push({ label, err }); console.error(`  ❌ ${label}: ${err?.message || err}`); }
+function warn(label, msg) { results.warned.push({ label, msg }); console.warn(`  ⚠️  ${label}: ${msg}`); }
 
 // ─── Core utilities ───────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -133,8 +133,8 @@ async function waitForButton(page, fragment, timeout = 30000) {
         // Debug info
         const buttons = await page.evaluate(() => {
             const all = Array.from(document.querySelectorAll('button'));
-            return all.map(btn => ({ 
-                disabled: btn.disabled, 
+            return all.map(btn => ({
+                disabled: btn.disabled,
                 text: btn.textContent.trim().substring(0, 60)
             }));
         });
@@ -177,11 +177,11 @@ async function fillNumber(page, index, value) {
         // Debug info
         const inputs = await page.evaluate(() => {
             const all = Array.from(document.querySelectorAll('input[type="number"]'));
-            return all.map((inp, i) => ({ 
-                index: i, 
-                disabled: inp.disabled, 
+            return all.map((inp, i) => ({
+                index: i,
+                disabled: inp.disabled,
                 value: inp.value,
-                placeholder: inp.placeholder 
+                placeholder: inp.placeholder
             }));
         });
         console.error(`fillNumber[${index}] failed. Available inputs:`, JSON.stringify(inputs, null, 2));
@@ -227,7 +227,7 @@ async function joinGame(page, cfg, retries = 2) {
 
     try {
         await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-        await waitFor(page, () => document.body.textContent.includes('Network Connected'), 30000);
+        await waitFor(page, () => document.body.textContent.includes('Online'), 30000);
 
         // Name
         await fillPlaceholder(page, 'e.g. Alice', name);
@@ -263,10 +263,10 @@ async function joinGame(page, cfg, retries = 2) {
                 const btns = Array.from(document.querySelectorAll('button'));
                 const start = btns.find(b => b.textContent.includes('START GAME'));
                 const asset = btns.find(b => b.textContent.includes('SELECT ASSET'));
-                const join  = btns.find(b => b.textContent.includes('JOIN GAME'));
+                const join = btns.find(b => b.textContent.includes('JOIN GAME'));
                 if (start) { start.click(); return 'START'; }
-                if (asset) { asset.click(); return 'ASSET';  }
-                if (join)  { join.click();  return 'JOIN';   }
+                if (asset) { asset.click(); return 'ASSET'; }
+                if (join) { join.click(); return 'JOIN'; }
                 return null;
             });
             if (found) break;
@@ -286,7 +286,7 @@ async function joinGame(page, cfg, retries = 2) {
 
             await page.evaluate(aName => {
                 const cards = Array.from(document.querySelectorAll('[style*="cursor: pointer"]'));
-                const card  = aName
+                const card = aName
                     ? cards.find(c => c.textContent.includes(aName))
                     : cards[0];
                 if (card) card.click();
@@ -315,54 +315,117 @@ async function joinGame(page, cfg, retries = 2) {
 }
 
 // ─── Phase helpers ───────────────────────────────────────────────────────────
-/** NESO: click ADVANCE PHASE and wait for `phaseTextOnNESO` to appear. With retries. */
+
+/** Pause the game by clicking FREEZE on NESO page */
+async function pauseGame(page) {
+    try {
+        const hasFreezeBtn = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('button:not([disabled])'))
+                .some(b => b.textContent.includes('FREEZE') || b.textContent.includes('⏸'));
+        });
+        if (hasFreezeBtn) {
+            await clickButton(page, 'FREEZE', 10000);
+            await sleep(500);
+            console.log('  [CTRL] Game PAUSED');
+        }
+    } catch (e) {
+        console.warn(`  [CTRL] Pause failed: ${e.message}`);
+    }
+}
+
+/** Resume the game by clicking RESUME on NESO page */
+async function resumeGame(page) {
+    try {
+        const hasResumeBtn = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('button:not([disabled])'))
+                .some(b => b.textContent.includes('RESUME') || b.textContent.includes('▶'));
+        });
+        if (hasResumeBtn) {
+            await clickButton(page, 'RESUME', 10000);
+            await sleep(500);
+            console.log('  [CTRL] Game RESUMED');
+        }
+    } catch (e) {
+        console.warn(`  [CTRL] Resume failed: ${e.message}`);
+    }
+}
+
+/** NESO: click ADVANCE PHASE and wait for `phaseTextOnNESO` to appear. With retries.
+ *  Handles paused state: resumes if paused, advances, then re-pauses for test stability. */
 async function nesoAdvance(page, phaseTextOnNESO, retries = 2) {
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-            // Verify NESO has the ADVANCE PHASE button (proves instructor role)
+            // First, ensure game is resumed so advance works
+            await resumeGame(page);
+            await sleep(500);
+
+            // Verify NESO has the ADVANCE PHASE or START SIMULATION button (proves instructor role)
             const hasButton = await page.evaluate(() => {
                 return Array.from(document.querySelectorAll('button:not([disabled])'))
-                    .some(b => b.textContent.toUpperCase().includes('ADVANCE PHASE'));
+                    .some(b => {
+                        const text = b.textContent.toUpperCase();
+                        return text.includes('ADVANCE PHASE') || text.includes('START SIMULATION');
+                    });
             });
             if (!hasButton) {
-                throw new Error('NESO does not have enabled ADVANCE PHASE button (not instructor?)');
+                throw new Error('NESO does not have enabled ADVANCE PHASE or START SIMULATION button (not instructor?)');
             }
-            
+
             console.log(`  [NESO] Attempting phase advance to "${phaseTextOnNESO}" (attempt ${attempt + 1}/${retries + 1})`);
-            
+
             // Get current phase before attempt
             const phaseBefore = await getPhaseLabel(page);
-            
-            await clickButton(page, 'ADVANCE PHASE', 20000);
-            
-            // Give GunDB time to propagate and click to register
-            await sleep(3000);
-            
+
+            // Click whichever button is present: START SIMULATION or ADVANCE PHASE
+            const buttonClicked = await page.evaluate(() => {
+                const btns = Array.from(document.querySelectorAll('button:not([disabled])'));
+                const advance = btns.find(b => b.textContent.toUpperCase().includes('ADVANCE PHASE'));
+                const start = btns.find(b => b.textContent.toUpperCase().includes('START SIMULATION'));
+                const btn = advance || start;
+                if (btn) {
+                    btn.click();
+                    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    return btn.textContent.trim().substring(0, 40);
+                }
+                return null;
+            });
+            if (!buttonClicked) {
+                throw new Error('Could not click ADVANCE PHASE or START SIMULATION button');
+            }
+            console.log(`  [NESO] Clicked: "${buttonClicked}"`);
+
+            // Immediately re-pause to prevent auto-timer from advancing further
+            await sleep(1500);
+            await pauseGame(page);
+
+            // Give GunDB time to propagate
+            await sleep(2000);
+
             // Verify phase actually changed on NESO's screen with longer timeout
             await waitFor(page, txt => document.body.textContent.includes(txt), 50000, phaseTextOnNESO);
-            
+
             // Additional verification with multiple checks
             let phaseConfirmed = false;
             for (let check = 0; check < 3; check++) {
                 const phaseChanged = await page.evaluate((txt) => {
                     return document.body.textContent.includes(txt);
                 }, phaseTextOnNESO);
-                
+
                 if (phaseChanged) {
                     phaseConfirmed = true;
                     break;
                 }
                 await sleep(500);
             }
-            
+
             if (!phaseConfirmed) {
                 throw new Error(`Phase text not found after advance: looking for "${phaseTextOnNESO}"`);
             }
-            
+
             const phaseAfter = await getPhaseLabel(page);
             console.log(`  [NESO] Phase advance succeeded: ${phaseBefore} → ${phaseAfter}`);
             return; // Success
-            
+
         } catch (e) {
             if (attempt < retries) {
                 console.warn(`  [NESO] Advance attempt ${attempt + 1} failed, retrying: ${e.message}`);
@@ -386,7 +449,7 @@ async function discoverStateObjects(page) {
                 foundPhaseIn: [],
                 gunDbInfo: {}
             };
-            
+
             // Check for objects containing 'phase' property
             try {
                 for (const key of Object.keys(window)) {
@@ -396,16 +459,16 @@ async function discoverStateObjects(page) {
                             if ('phase' in val) {
                                 result.foundPhaseIn.push(key);
                             }
-                            if (key.toLowerCase().includes('gun') || 
+                            if (key.toLowerCase().includes('gun') ||
                                 key.toLowerCase().includes('gun') ||
                                 key.toLowerCase().includes('state')) {
                                 result.windowGameDataVars.push(`${key}: ${typeof val}`);
                             }
                         }
-                    } catch (e) {}
+                    } catch (e) { }
                 }
-            } catch (e) {}
-            
+            } catch (e) { }
+
             // Check GunDB structure if available
             if (typeof window.Gun !== 'undefined') {
                 result.gunDbInfo.gunExists = true;
@@ -413,18 +476,18 @@ async function discoverStateObjects(page) {
             if (typeof window.GUN !== 'undefined') {
                 result.gunDbInfo.GUNexists = true;
             }
-            
+
             // Check React DevTools or app root state
             try {
                 const root = document.querySelector('#root');
                 if (root && root._react) {
                     result.gunDbInfo.reactRootFound = true;
                 }
-            } catch (e) {}
-            
+            } catch (e) { }
+
             return result;
         });
-        
+
         console.log('\n[STATE DISCOVERY]');
         console.log(`  window.gunState type: ${discovery.windowGunState}`);
         console.log(`  window.gameState type: ${discovery.windowGameState}`);
@@ -432,7 +495,7 @@ async function discoverStateObjects(page) {
         console.log(`  Objects with 'phase' property: ${discovery.foundPhaseIn.join(', ') || 'none'}`);
         console.log(`  Game/state variables: ${discovery.windowGameDataVars.slice(0, 5).join(', ') || 'none'}`);
         console.log(`  GunDB info: ${JSON.stringify(discovery.gunDbInfo)}`);
-        
+
         return discovery;
     } catch (e) {
         console.log(`[STATE DISCOVERY] Error: ${e.message}`);
@@ -458,30 +521,49 @@ async function getGunPhaseState(page) {
     }
 }
 
-/** Simple phase sync with text polling. */
+/** Simple phase sync with text polling AND gunState fallback. */
 async function syncPhase(pages, phaseText, timeout = 40000) {
     const deadline = Date.now() + timeout;
-    
+
+    // Map phaseText to gunState.phase value
+    const phaseMap = {
+        'DAY-AHEAD': 'DA',
+        'INTRADAY': 'ID',
+        'BALANCING': 'BM',
+        'SETTLEMENT': 'SETTLED',
+        'SETTLED': 'SETTLED'
+    };
+    const expectedGunPhase = phaseMap[phaseText.toUpperCase()] || null;
+
     while (Date.now() < deadline) {
-        // Check if all pages show the target phase text
-        const textMatches = await Promise.all(pages.map(p =>
-            p.evaluate(txt => document.body.textContent.includes(txt), phaseText)
-                .catch(() => false)
-        ));
-        
-        const allMatched = textMatches.every(m => m);
+        // Check if all pages show the target phase text OR have matching gunState
+        const matches = await Promise.all(pages.map(async p => {
+            try {
+                return await p.evaluate((txt, gunPhase) => {
+                    // Primary: check body text for phase label
+                    if (document.body.textContent.includes(txt)) return true;
+                    // Fallback: check window.gunState.phase (set by SharedLayout)
+                    if (gunPhase && window.gunState && window.gunState.phase === gunPhase) return true;
+                    return false;
+                }, phaseText, expectedGunPhase);
+            } catch {
+                return false;
+            }
+        }));
+
+        const allMatched = matches.every(m => m);
         if (allMatched) {
             console.log(`  [SYNC] Phase "${phaseText}" confirmed on all players`);
             await sleep(2000); // Give React time to finalize
             return;
         }
-        
-        const matched = textMatches.filter(m => m).length;
+
+        const matched = matches.filter(m => m).length;
         console.log(`  [SYNC] ${matched}/${pages.length} players show "${phaseText}", waiting...`);
-        
+
         await sleep(1500);
     }
-    
+
     throw new Error(`Phase "${phaseText}" not synced after ${timeout}ms`);
 }
 
@@ -513,7 +595,7 @@ async function generateGameValues(page, numInputs) {
     if (constraints.inputs.length < numInputs) {
         throw new Error(`Expected ${numInputs} inputs, found ${constraints.inputs.length}`);
     }
-    
+
     return constraints.inputs.slice(0, numInputs).map(inp => {
         const min = parseInt(inp.min) || 0;
         const max = parseInt(inp.max) || 100;
@@ -529,7 +611,7 @@ async function generateGameValues(page, numInputs) {
 async function discoverFormMessages(page) {
     return await page.evaluate(() => {
         const allBtns = Array.from(document.querySelectorAll('button'));
-        const submitBtn = allBtns.find(b => 
+        const submitBtn = allBtns.find(b =>
             !b.disabled && (
                 b.textContent.toUpperCase().includes('SUBMIT') ||
                 b.textContent.toUpperCase().includes('CONFIRM') ||
@@ -537,12 +619,12 @@ async function discoverFormMessages(page) {
                 b.textContent.includes('→')
             )
         );
-        
+
         return {
             buttonText: submitBtn ? submitBtn.textContent.trim() : null,
-            allButtons: allBtns.slice(0, 10).map(b => ({ 
-                text: b.textContent.trim().substring(0, 60), 
-                disabled: b.disabled 
+            allButtons: allBtns.slice(0, 10).map(b => ({
+                text: b.textContent.trim().substring(0, 60),
+                disabled: b.disabled
             }))
         };
     });
@@ -560,7 +642,7 @@ async function fillAndSubmit(page, numInputs, submitButtonFragment, successTextT
     }
     const actualButtonText = formMsgs.buttonText;
     console.log(`    [fillAndSubmit] Found button: "${actualButtonText}"`);
-    
+
     await sleep(400);
 
     // 2. Wait for enough enabled number inputs
@@ -590,17 +672,17 @@ async function fillAndSubmit(page, numInputs, submitButtonFragment, successTextT
             await sleep(600);
         }
     }
-    
+
     // 3. Generate values from actual game constraints
     const gameValues = await generateGameValues(page, numInputs);
     console.log(`    [fillAndSubmit] Generated values from game constraints: ${gameValues.join(', ')}`);
-    
+
     // 4. Fill inputs
     for (let i = 0; i < gameValues.length; i++) {
         await fillNumber(page, i, gameValues[i]);
         await sleep(50);
     }
-    
+
     // 5. Wait for button to be enabled
     let btnWaitRetries = 0;
     while (btnWaitRetries < 4) {
@@ -626,13 +708,13 @@ async function fillAndSubmit(page, numInputs, submitButtonFragment, successTextT
             await sleep(1000);
         }
     }
-    
+
     await sleep(400);
-    
+
     // 6. Click button (use actual button text discovered)
     await clickButton(page, submitButtonFragment, 50000);
     await sleep(500);
-    
+
     // 7. Wait for success indication from game
     // If successText provided, wait for it; otherwise wait for UI changes
     if (successTextToWaitFor) {
@@ -684,10 +766,10 @@ async function traderDA(page) {
 }
 
 async function traderID(page) {
-    // Trader ID: close position
+    // Trader ID: adjust position via intraday tab
     await selectTab(page, 'INTRADAY');
-    await clickButton(page, 'SELL POSITION');
-    await fillAndSubmit(page, 2, 'SUBMIT TO ORDERBOOK', null);
+    await clickButton(page, 'SELL (Go Short)');
+    await fillAndSubmit(page, 2, 'SUBMIT ID ORDER', null);
 }
 
 // --- BESS ---
@@ -706,8 +788,19 @@ async function bessID(page) {
 }
 
 async function bessBM(page) {
-    // BESS BM: dispatch MW and reserve price
-    await fillAndSubmit(page, 2, 'DISCHARGE', null);
+    // BESS BM: dispatch MW and reserve price (button text varies with grid state)
+    // When grid is short: "OFFER RESERVE & DISCHARGE →"
+    // When grid is long: "BID TO ABSORB & CHARGE →"
+    // Use data-testid for reliability
+    const btnFragment = await page.evaluate(() => {
+        const btn = document.querySelector('[data-testid="bess-submit-bm"]');
+        if (btn) return btn.textContent.trim().substring(0, 30);
+        const btns = Array.from(document.querySelectorAll('button:not([disabled])'));
+        const match = btns.find(b => b.textContent.includes('DISCHARGE') || b.textContent.includes('CHARGE'));
+        return match ? match.textContent.trim().substring(0, 30) : 'DISCHARGE';
+    });
+    console.log(`    [bessBM] Detected button fragment: "${btnFragment}"`);
+    await fillAndSubmit(page, 2, btnFragment, null);
 }
 
 // --- DSR ---
@@ -726,8 +819,20 @@ async function dsrID(page) {
 }
 
 async function dsrBM(page) {
-    // DSR BM: curtailment bid
-    await fillAndSubmit(page, 2, 'CURTAILMENT', null);
+    // DSR BM: curtailment or payback bid (button text varies with grid state)
+    // When grid is long (not short): "OFFER CURTAILMENT →"
+    // When grid is short: "VOLUNTARY EARLIER PAYBACK →"
+    // Use data-testid for reliability
+    const btnFragment = await page.evaluate(() => {
+        const btn = document.querySelector('[data-testid="dsr-submit-bm"]');
+        if (btn) return btn.textContent.trim().substring(0, 30);
+        // Fallback: find any enabled button with relevant text
+        const btns = Array.from(document.querySelectorAll('button:not([disabled])'));
+        const match = btns.find(b => b.textContent.includes('CURTAILMENT') || b.textContent.includes('PAYBACK'));
+        return match ? match.textContent.trim().substring(0, 30) : 'CURTAILMENT';
+    });
+    console.log(`    [dsrBM] Detected button fragment: "${btnFragment}"`);
+    await fillAndSubmit(page, 2, btnFragment, null);
 }
 
 // --- Interconnector ---
@@ -746,12 +851,26 @@ async function getCurrentSP(page) {
 
 async function getPhaseLabel(page) {
     return page.evaluate(() => {
-        const t = document.body.textContent.toUpperCase();
-        // Check for phase text more robustly
-        if (t.includes('SETTLEMENT')) return 'SETTLED';
-        if (t.includes('BALANCING') || t.includes('BM')) return 'BM';
-        if (t.includes('INTRADAY') || t.includes('ID')) return 'ID';
-        if (t.includes('DAY-AHEAD') || t.includes('DA')) return 'DA';
+        // Use window.gunState.phase if available (set by SharedLayout)
+        if (window.gunState && window.gunState.phase) {
+            const p = window.gunState.phase;
+            if (p === 'DA') return 'DA';
+            if (p === 'ID') return 'ID';
+            if (p === 'BM') return 'BM';
+            if (p === 'SETTLED') return 'SETTLED';
+        }
+        // Fallback: check the phase pill labels from SharedLayout (emoji-prefixed, unique to current phase)
+        const t = document.body.textContent;
+        if (t.includes('🏁 SETTLEMENT')) return 'SETTLED';
+        if (t.includes('⚡ BALANCING')) return 'BM';
+        if (t.includes('🤝 INTRADAY')) return 'ID';
+        if (t.includes('📋 DAY-AHEAD')) return 'DA';
+        // Last fallback: broader text matching
+        const u = t.toUpperCase();
+        if (u.includes('SETTLEMENT PHASE')) return 'SETTLED';
+        if (u.includes('BALANCING MECHANISM')) return 'BM';
+        if (u.includes('INTRADAY BILATERALS')) return 'ID';
+        if (u.includes('DA MARKET SUBMISSION')) return 'DA';
         return null;
     });
 }
@@ -771,7 +890,152 @@ async function checkRevenue(page, roleName) {
         document.body.textContent.includes('TOTAL P&L')
     );
     found ? pass(`${roleName}: Revenue panel visible`) :
-            fail(`${roleName}: Revenue panel missing`, new Error('No revenue UI found'));
+        fail(`${roleName}: Revenue panel missing`, new Error('No revenue UI found'));
+}
+
+/**
+ * PHASE SYNC ASSERTION (NEW)
+ * After NESO clicks "Advance Phase", verify ALL players' UI shows the same phase.
+ * This guarantees GunDB is syncing the game state instantly to all clients.
+ */
+async function verifyPhaseSync(pages, expectedPhase, rolesToCheck = null) {
+    const toCheck = rolesToCheck ? pages.filter((_, i) => rolesToCheck.includes(i)) : pages;
+    const phaseLabels = await Promise.all(toCheck.map(p => getPhaseLabel(p)));
+
+    const allMatched = phaseLabels.every(phase => {
+        if (expectedPhase === 'DA') return phase === 'DA';
+        if (expectedPhase === 'ID') return phase === 'ID';
+        if (expectedPhase === 'BM') return phase === 'BM';
+        if (expectedPhase === 'SETTLED') return phase === 'SETTLED';
+        return false;
+    });
+
+    if (allMatched) {
+        pass(`✓ Phase Sync: All ${toCheck.length} players show "${expectedPhase}"`);
+        return true;
+    } else {
+        fail(`✗ Phase Sync: Mismatch on "${expectedPhase}"`,
+            new Error(`Players see: ${phaseLabels.join(', ')}`));
+        return false;
+    }
+}
+
+/**
+ * MARKET CLEARING ASSERTION (NEW)
+ * After BM closes, verify the clearing price (MCP) is calculated and displayed.
+ * Check that it's between SBP and SSP (logical constraint).
+ */
+async function verifyMarketClearing(pages, iNESO, iGEN, iSUP, iBESS, iDSR) {
+    console.log('\n   [Assertion] Market Clearing Price (MCP) verification…');
+
+    try {
+        // NESO should show the merit order with accepted bids and a clearing price
+        const nesoData = await pages[iNESO].evaluate(() => {
+            const text = document.body.textContent;
+            const mcpMatch = text.match(/MCP[:\s]+[£$]?([\d.]+)/);
+            const sbpMatch = text.match(/SBP[:\s]+[£$]?([\d.]+)/);
+            const sspMatch = text.match(/SSP[:\s]+[£$]?([\d.]+)/);
+            const acceptedMatch = text.match(/ACCEPTED\s*(\d+)/);
+
+            return {
+                mcp: mcpMatch ? parseFloat(mcpMatch[1]) : null,
+                sbp: sbpMatch ? parseFloat(sbpMatch[1]) : null,
+                ssp: sspMatch ? parseFloat(sspMatch[1]) : null,
+                accepted: acceptedMatch ? parseInt(acceptedMatch[1], 10) : 0,
+                hasAccepted: text.includes('ACCEPTED'),
+                hasMeritOrder: text.includes('MERIT') || text.includes('OFFER')
+            };
+        });
+
+        if (!nesoData.mcp) {
+            warn('Market Clearing: MCP not visible on NESO screen (may be calculated off-page)',
+                'Check backend settlement calculations');
+            return false;
+        }
+
+        // Verify MCP is logical: should be within bid/offer range
+        if (nesoData.sbp && nesoData.ssp && nesoData.mcp) {
+            const low = Math.min(nesoData.sbp, nesoData.ssp);
+            const high = Math.max(nesoData.sbp, nesoData.ssp);
+
+            if (nesoData.mcp >= low * 0.8 && nesoData.mcp <= high * 1.2) {
+                pass(`✓ Market Clearing: MCP £${nesoData.mcp.toFixed(2)} is logical (SBP: £${nesoData.sbp.toFixed(2)}, SSP: £${nesoData.ssp.toFixed(2)})`);
+            } else {
+                warn(`Market Clearing: MCP £${nesoData.mcp} outside expected range`,
+                    `SBP£${nesoData.sbp} / SSP£${nesoData.ssp}`);
+            }
+        }
+
+        // Check for accepted bids
+        if (nesoData.hasAccepted || nesoData.accepted > 0) {
+            pass(`✓ Market Clearing: ${nesoData.accepted} bids accepted, merit order populated`);
+        } else {
+            warn('Market Clearing: No accepted bids visible', 'All bids may have been rejected or cleared at same price');
+        }
+
+        return nesoData.mcp !== null;
+
+    } catch (e) {
+        fail('Market Clearing: verification failed', e);
+        return false;
+    }
+}
+
+/**
+ * BUTTON LOCKOUT ASSERTION (NEW)
+ * After a player submits a form, verify the submit button becomes disabled
+ * and the UI indicates submission was successful (checkmark, locked state, etc).
+ * This prevents double-submission bugs.
+ */
+async function verifyButtonLockout(page, playerName, submitButtonFragment) {
+    try {
+        // Wait a moment for events to propagate
+        await sleep(400);
+
+        const buttonState = await page.evaluate((frag) => {
+            const btns = Array.from(document.querySelectorAll('button'));
+            const target = btns.find(b =>
+                b.textContent.toUpperCase().includes(frag.toUpperCase())
+            );
+
+            if (!target) {
+                return { found: false, message: 'Button not found after submission' };
+            }
+
+            return {
+                found: true,
+                disabled: target.disabled,
+                text: target.textContent.trim().substring(0, 80),
+                title: target.title || '',
+                ariaLabel: target.getAttribute('aria-label') || '',
+                hasCheckmark: target.textContent.includes('✓') ||
+                    target.textContent.includes('✔') ||
+                    target.textContent.includes('Locked')
+            };
+        }, submitButtonFragment);
+
+        if (!buttonState.found) {
+            warn(`Button Lockout (${playerName}): ${buttonState.message}`,
+                'Button may have been replaced with another control');
+            return false;
+        }
+
+        if (buttonState.disabled) {
+            pass(`✓ Button Lockout (${playerName}): Submit button is DISABLED`);
+            if (buttonState.hasCheckmark) {
+                pass(`✓ Button Lockout (${playerName}): Button shows locked/checkmark state`);
+            }
+            return true;
+        } else {
+            fail(`Button Lockout (${playerName}): Submit button still ENABLED after submission`,
+                new Error(`Button text: "${buttonState.text}"`));
+            return false;
+        }
+
+    } catch (e) {
+        fail(`Button Lockout (${playerName}): Check failed`, e);
+        return false;
+    }
 }
 
 // ─── Main runner ─────────────────────────────────────────────────────────────
@@ -783,10 +1047,11 @@ async function checkRevenue(page, roleName) {
     console.log('══════════════════════════════════════════════════════════════\n');
 
     const browsers = [];
-    const pages    = [];
+    const pages = [];
 
     // Index shortcuts
-    const [iNESO, iGEN, iSUP, iTRAD, iBESS, iDSR, iIC] = [0,1,2,3,4,5,6];
+    // index shortcuts for pages (interconnector removed)
+    const [iNESO, iGEN, iSUP, iTRAD, iBESS, iDSR] = [0, 1, 2, 3, 4, 5];
 
     try {
         // ════════════════════════════════════════════════════════════════
@@ -822,12 +1087,18 @@ async function checkRevenue(page, roleName) {
             }
         }
 
+        // ── CRITICAL: Pause the game immediately to prevent auto-timer from cycling phases ──
+        console.log('\n─── Pausing Game to Control Phase Timing ───────────────────');
+        await sleep(2000);
+        await pauseGame(pages[iNESO]);
+        await sleep(2000); // Let pause propagate via GunDB to all clients
+
         // ── Initial sync check ──
         console.log('\n─── Initial State Verification ────────────────────────────');
-        
+
         // Give GunDB time to settle after all joins
         await sleep(3000);
-        
+
         const initSPs = await Promise.all(pages.map(getCurrentSP));
         if (initSPs.every(sp => sp !== null))
             pass(`All ${ROLES.length} players have SP indicator`);
@@ -866,43 +1137,73 @@ async function checkRevenue(page, roleName) {
         console.log('\n─── Phase 1: Day-Ahead (DA) ────────────────────────────────');
 
         // DA is the opening phase — no ADVANCE needed from NESO; game starts in DA.
-        // Sync all non-NESO players to confirm DA is visible.
+        // All players default to phase='DA' via React state. The SharedLayout renders
+        // "📋 DAY-AHEAD" and sets window.gunState.phase = 'DA'.
+        // We use syncPhase which checks both text and window.gunState.phase.
         try {
             await syncPhase(pages.slice(1), 'DAY-AHEAD', 45000);
             pass('DA phase: all players synced');
         } catch (e) { fail('DA phase sync', e); }
 
+        // ✅ NEW ASSERTION: Verify Phase Sync on all players
+        await verifyPhaseSync(pages, 'DA');
+
         // Extra wait to ensure GunDB and React reconciliation
         await sleep(3000);
 
         // Generator DA
-        try { await genDA(pages[iGEN]);   pass('Generator: DA offer submitted & locked'); }
+        try {
+            await genDA(pages[iGEN]);
+            pass('Generator: DA offer submitted & locked');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iGEN], 'Generator', 'SUBMIT DA OFFER');
+        }
         catch (e) { fail('Generator: DA', e); }
         await sleep(500);
 
         // BESS DA (moved earlier to beat phase advance)
-        try { await bessDA(pages[iBESS]); pass('BESS: DA schedule locked'); }
+        try {
+            await bessDA(pages[iBESS]);
+            pass('BESS: DA schedule locked');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iBESS], 'BESS', 'SUBMIT DA SCHEDULE');
+        }
         catch (e) { fail('BESS: DA', e); }
         await sleep(500);
 
         // Supplier DA
-        try { await supDA(pages[iSUP]);   pass('Supplier: DA purchase submitted & locked'); }
+        try {
+            await supDA(pages[iSUP]);
+            pass('Supplier: DA purchase submitted & locked');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iSUP], 'Supplier', 'SUBMIT DA PURCHASE');
+        }
         catch (e) { fail('Supplier: DA', e); }
         await sleep(500);
 
         // DSR DA (moved earlier to beat phase advance)
-        try { await dsrDA(pages[iDSR]);  pass('DSR: DA schedule locked'); }
+        try {
+            await dsrDA(pages[iDSR]);
+            pass('DSR: DA schedule locked');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iDSR], 'DSR', 'SUBMIT DA SCHEDULE');
+        }
         catch (e) { fail('DSR: DA', e); }
         await sleep(500);
 
         // Trader DA (needs tab switch)
-        try { await traderDA(pages[iTRAD]); pass('Trader: DA speculative position locked'); }
+        try {
+            await traderDA(pages[iTRAD]);
+            pass('Trader: DA speculative position locked');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iTRAD], 'Trader', 'SUBMIT');
+        }
         catch (e) { fail('Trader: DA', e); }
         await sleep(500);
 
         // IC — no manual DA submission
         try {
-            await checkText(pages[iIC], 'AUTOMATED INITIAL FLOW', 'Interconnector: Implicit coupling banner visible in DA');
+            // interconnector flow is automatic; no player page to inspect
         } catch (e) { fail('IC: DA implicit coupling check', e); }
 
         // ════════════════════════════════════════════════════════════════
@@ -926,36 +1227,66 @@ async function checkRevenue(page, roleName) {
             await syncPhase(pages.slice(1), 'INTRADAY', 60000);
             pass('ID phase: all players synced');
         } catch (e) { fail('ID phase sync', e); }
+
+        // ✅ NEW ASSERTION: Verify Phase Sync
+        await sleep(2000);
+        await verifyPhaseSync(pages, 'ID');
+
         await sleep(3000);
 
         // Generator ID
-        try { await genID(pages[iGEN]);   pass('Generator: ID order published'); }
+        try {
+            await genID(pages[iGEN]);
+            pass('Generator: ID order published');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iGEN], 'Generator', 'SUBMIT ID ORDER');
+        }
         catch (e) { fail('Generator: ID', e); }
         await sleep(500);
 
         // Supplier ID
-        try { await supID(pages[iSUP]);   pass('Supplier: ID order published'); }
+        try {
+            await supID(pages[iSUP]);
+            pass('Supplier: ID order published');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iSUP], 'Supplier', 'SUBMIT ID ORDER');
+        }
         catch (e) { fail('Supplier: ID', e); }
         await sleep(500);
 
         // Trader ID
-        try { await traderID(pages[iTRAD]); pass('Trader: ID order published'); }
+        try {
+            await traderID(pages[iTRAD]);
+            pass('Trader: ID order published');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iTRAD], 'Trader', 'SUBMIT');
+        }
         catch (e) { fail('Trader: ID', e); }
         await sleep(500);
 
         // BESS ID
-        try { await bessID(pages[iBESS]); pass('BESS: ID order published'); }
+        try {
+            await bessID(pages[iBESS]);
+            pass('BESS: ID order published');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iBESS], 'BESS', 'SUBMIT ID ORDER');
+        }
         catch (e) { fail('BESS: ID', e); }
         await sleep(500);
 
         // DSR ID
-        try { await dsrID(pages[iDSR]);  pass('DSR: ID order published'); }
+        try {
+            await dsrID(pages[iDSR]);
+            pass('DSR: ID order published');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iDSR], 'DSR', 'SUBMIT ID ORDER');
+        }
         catch (e) { fail('DSR: ID', e); }
         await sleep(500);
 
         // IC: no manual ID submission
         try {
-            await checkText(pages[iIC], 'AUTOMATED INITIAL FLOW', 'Interconnector: Implicit coupling banner visible in ID');
+            // no ID banner to check for system interconnector
         } catch (e) { warn('IC: ID implicit coupling check', e?.message); }
 
         // ════════════════════════════════════════════════════════════════
@@ -974,21 +1305,24 @@ async function checkRevenue(page, roleName) {
             throw new Error('CRITICAL: NESO cannot advance to BM phase. Aborting test to prevent cascading failures.');
         }
 
+        // ✅ NEW ASSERTION: Verify Phase Sync on all players
+        await verifyPhaseSync(pages, 'BM');
+
         // Sync BM to all physical-asset players using new enhanced sync with GunDB verification
         try {
             await syncPhase(pages.filter((p, i) => ![iNESO, iTRAD, iSUP].includes(i)), 'BALANCING', 70000);
             pass('Generator: BM phase synced');
             pass('BESS: BM phase synced');
             pass('DSR: BM phase synced');
-            pass('Interconnector: BM phase synced');
+            // no interconnector player to sync
         } catch (e) {
             console.log(`❌ BM phase sync error: ${e.message}`);
             // Fallback: try individual checks
             const bmSyncPages = [
-                { page: pages[iGEN],  name: 'Generator' },
-                { page: pages[iBESS], name: 'BESS'      },
-                { page: pages[iDSR],  name: 'DSR'       },
-                { page: pages[iIC],   name: 'Interconnector' },
+                { page: pages[iGEN], name: 'Generator' },
+                { page: pages[iBESS], name: 'BESS' },
+                { page: pages[iDSR], name: 'DSR' },
+                // interconnector has no player page
             ];
             for (const { page, name } of bmSyncPages) {
                 try {
@@ -998,31 +1332,42 @@ async function checkRevenue(page, roleName) {
                 } catch (err) { fail(`${name}: BM phase sync`, err); }
             }
         }
-        
+
         // Extra wait for BM UIs to fully render after phase change
         await sleep(4000);
 
         // Generator BM — THE PREVIOUSLY FAILING STEP
         // Now fixed: fillNumber dispatches both input and change events for React state updates
-        try { await genBM(pages[iGEN]);   pass('Generator: BM bid submitted'); }
+        try {
+            await genBM(pages[iGEN]);
+            pass('Generator: BM bid submitted');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iGEN], 'Generator', 'TO NESO');
+        }
         catch (e) { fail('Generator: BM', e); }
         await sleep(800);
 
         // BESS BM
-        try { await bessBM(pages[iBESS]); pass('BESS: BM bid submitted'); }
+        try {
+            await bessBM(pages[iBESS]);
+            pass('BESS: BM bid submitted');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iBESS], 'BESS', 'DISCHARGE');
+        }
         catch (e) { fail('BESS: BM', e); }
         await sleep(800);
 
         // DSR BM
-        try { await dsrBM(pages[iDSR]);  pass('DSR: BM bid submitted'); }
+        try {
+            await dsrBM(pages[iDSR]);
+            pass('DSR: BM bid submitted');
+            // ✅ NEW ASSERTION: Button Lockout after submit
+            await verifyButtonLockout(pages[iDSR], 'DSR', 'CURTAILMENT');
+        }
         catch (e) { fail('DSR: BM', e); }
         await sleep(800);
 
-        // Interconnector BM (optional — depends on grid state)
-        try {
-            const icBid = await icBM(pages[iIC]);
-            if (icBid) pass('Interconnector: BM override submitted');
-        } catch (e) { warn('Interconnector: BM', e?.message); }
+        // Interconnector is a system asset; BM overrides are not submitted by a player
 
         // NESO: verify merit order table has at least one accepted bid
         try {
@@ -1030,6 +1375,9 @@ async function checkRevenue(page, roleName) {
                 () => document.body.textContent.includes('ACCEPTED'), 20000);
             pass('NESO: Merit order shows accepted bids');
         } catch (e) { fail('NESO: Merit order populated', e); }
+
+        // ✅ NEW ASSERTION: Market Clearing – verify MCP is calculated and logical
+        await verifyMarketClearing(pages, iNESO, iGEN, iSUP, iBESS, iDSR);
 
         // ════════════════════════════════════════════════════════════════
         // PHASE 4 – Settlement
@@ -1057,6 +1405,9 @@ async function checkRevenue(page, roleName) {
             pass('Settlement phase: all players synced');
         } catch (e) { warn('Settlement sync', e?.message); }
 
+        // ✅ NEW ASSERTION: Verify Phase Sync on Settlement closure
+        await verifyPhaseSync(pages, 'SETTLED');
+
         // ════════════════════════════════════════════════════════════════
         // FINAL VERIFICATIONS
         // ════════════════════════════════════════════════════════════════
@@ -1075,10 +1426,10 @@ async function checkRevenue(page, roleName) {
 
         // 3. Revenue panels visible on all player screens
         const revChecks = [
-            { idx: iGEN,  name: 'Generator'      },
-            { idx: iSUP,  name: 'Supplier'        },
-            { idx: iBESS, name: 'BESS'            },
-            { idx: iDSR,  name: 'DSR'             },
+            { idx: iGEN, name: 'Generator' },
+            { idx: iSUP, name: 'Supplier' },
+            { idx: iBESS, name: 'BESS' },
+            { idx: iDSR, name: 'DSR' },
         ];
         for (const { idx, name } of revChecks) {
             await checkRevenue(pages[idx], name);
@@ -1086,13 +1437,13 @@ async function checkRevenue(page, roleName) {
 
         // 4. Role-specific KPI labels
         const kpiChecks = [
-            { idx: iGEN,  name: 'Generator', kpi: 'Profit/MW'                  },
-            { idx: iSUP,  name: 'Supplier',  kpi: 'Cost/MWh'                   },
-            { idx: iTRAD, name: 'Trader',    kpi: 'Mark-to-Market'             },
-            { idx: iBESS, name: 'BESS',      kpi: 'STATE OF CHARGE'            },
-            { idx: iDSR,  name: 'DSR',       kpi: 'Live Operational State'     },
-            { idx: iIC,   name: 'IC',        kpi: 'Price Coupling'             },
-            { idx: iNESO, name: 'NESO',      kpi: 'Live Merit Order'           },
+            { idx: iGEN, name: 'Generator', kpi: 'Profit/MW' },
+            { idx: iSUP, name: 'Supplier', kpi: 'Cost/MWh' },
+            { idx: iTRAD, name: 'Trader', kpi: 'Mark-to-Market' },
+            { idx: iBESS, name: 'BESS', kpi: 'STATE OF CHARGE' },
+            { idx: iDSR, name: 'DSR', kpi: 'Live Operational State' },
+            // IC row removed from KPI table
+            { idx: iNESO, name: 'NESO', kpi: 'Live Merit Order' },
         ];
         for (const { idx, name, kpi } of kpiChecks) {
             await checkText(pages[idx], kpi, `${name}: KPI label "${kpi}" visible`);
@@ -1117,7 +1468,7 @@ async function checkRevenue(page, roleName) {
         await checkText(pages[iDSR], 'SYSTEM STATUS', 'DSR: System status panel visible');
 
         // 8. Interconnector: price spread display
-        await checkText(pages[iIC], 'PRICE ARBITRAGE SPREAD', 'IC: Arbitrage spread panel visible');
+        // no arbitrage panel for IC in this test
 
         // 9. Trader: MTM P&L panel present
         await checkText(pages[iTRAD], 'TRADING DESK ANALYSIS', 'Trader: Trading Desk Analysis visible');
@@ -1140,8 +1491,14 @@ async function checkRevenue(page, roleName) {
         } catch (e) { fail('Market Dictionary toggle', e); }
 
         // 13. NESO: Freeze & Explain (pause) toggle
+        // Note: Game may already be paused from our test control flow.
+        // First ensure it's in a known state (resume if paused, then test the toggle)
         console.log('\n   [Feature] NESO pause / resume toggle…');
         try {
+            // Ensure we're in a known state first (resumed)
+            await resumeGame(pages[iNESO]);
+            await sleep(500);
+
             await clickButton(pages[iNESO], 'FREEZE', 10000);
             await waitFor(pages[iNESO],
                 () => document.body.textContent.includes('RESUME'), 10000);
@@ -1155,7 +1512,7 @@ async function checkRevenue(page, roleName) {
 
         // 14. New realism features checks
         console.log('\n   [Feature] Realism implementation checks…');
-        
+
         // BSUoS socialization
         for (const { idx, name } of revChecks) {
             const hasBSUoS = await pages[idx].evaluate(() =>
@@ -1196,10 +1553,10 @@ async function checkRevenue(page, roleName) {
 
         // 15. All non-host players have their left-column net position widget
         const positionChecks = [
-            { idx: iGEN,  label: 'Generator: NET POS widget' },
-            { idx: iSUP,  label: 'Supplier: HEDGE RATIO widget' },
-            { idx: iBESS, label: 'BESS: NET POS widget'     },
-            { idx: iDSR,  label: 'DSR: NET POS widget'      },
+            { idx: iGEN, label: 'Generator: NET POS widget' },
+            { idx: iSUP, label: 'Supplier: HEDGE RATIO widget' },
+            { idx: iBESS, label: 'BESS: NET POS widget' },
+            { idx: iDSR, label: 'DSR: NET POS widget' },
         ];
         for (const { idx, label } of positionChecks) {
             const found = await pages[idx].evaluate(() =>
@@ -1229,7 +1586,7 @@ async function checkRevenue(page, roleName) {
         }
         console.log('══════════════════════════════════════════════════════════════\n');
 
-        for (const b of browsers) await b.close().catch(() => {});
+        for (const b of browsers) await b.close().catch(() => { });
     }
 
     process.exit(results.failed.length > 0 ? 1 : 0);

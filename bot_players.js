@@ -19,7 +19,7 @@ const BOTS_CONFIG = [
     { id: 'bot_trader', name: 'BotTrade (Spec)', role: 'TRADER', asset: 'NONE', cash: 5000, daCash: 0, sof: 100, col: '#b78bfa' },
     { id: 'bot_sup', name: 'BotSupply (Retail)', role: 'SUPPLIER', asset: 'NONE', cash: 0, daCash: 0, sof: 100, col: '#38c0fc' },
     { id: 'bot_dsr', name: 'BotFlex (DSR)', role: 'DSR', asset: 'DSR', cash: 0, daCash: 0, sof: 100, col: '#f5b222' },
-    { id: 'bot_ic', name: 'BotIC (Link)', role: 'INTERCONNECTOR', asset: 'IC_FR', cash: 0, daCash: 0, sof: 50, col: '#8b5cf6' }
+    // interconnector is now automatic system asset – no bot needed
 ];
 
 let activeBots = [];
@@ -105,7 +105,7 @@ function submitDaBids() {
         else if (bot.role === 'SUPPLIER') { mw = 250; price = 65 + Math.floor(Math.random() * 10); side = 'bid'; }
         else if (bot.role === 'TRADER') { mw = 100; price = 55 + Math.floor(Math.random() * 15); side = Math.random() > 0.5 ? 'bid' : 'offer'; }
         else if (bot.role === 'BESS') { mw = 50; price = 40 + Math.floor(Math.random() * 10); side = 'bid'; } // charge in DA
-        else if (bot.role === 'INTERCONNECTOR') { mw = 100; price = 45 + Math.floor(Math.random() * 10); side = Math.random() > 0.5 ? 'bid' : 'offer'; }
+        // Interconnector no longer submits DA bids – flows are automatic
 
         if (mw > 0) {
             gun.get(roomKey(room, `da_${daCycle}`)).get(bot.id).put({ id: bot.id, name: bot.name, asset: bot.asset, mw, price, side, col: bot.col, isBot: true });
@@ -122,7 +122,7 @@ function submitIdBids() {
         if (bot.role === 'GENERATOR') { mw = 50; price = 65 + Math.floor(Math.random() * 10); side = 'offer'; }
         else if (bot.role === 'BESS') { mw = 20; price = 55 + Math.floor(Math.random() * 10); side = 'bid'; }
         else if (bot.role === 'TRADER') { mw = 30; price = 60 + Math.floor(Math.random() * 15); side = Math.random() > 0.5 ? 'bid' : 'offer'; }
-        else if (bot.role === 'INTERCONNECTOR') { mw = 20; price = 60 + Math.floor(Math.random() * 10); side = Math.random() > 0.5 ? 'bid' : 'offer'; }
+        // Interconnector no longer submits ID orders
 
         if (mw > 0) {
             gun.get(roomKey(room, `id_${currentSp}`)).get(bot.id).put({ id: bot.id, name: bot.name, asset: bot.asset, mw, price, side, col: bot.col, isBot: true });
@@ -140,7 +140,7 @@ function submitBmBids() {
         else if (bot.role === 'BESS') { mw = 50; price = 85 + Math.floor(Math.random() * 20); side = 'offer'; } // discharge in BM
         else if (bot.role === 'DSR') { mw = 30; price = 150 + Math.floor(Math.random() * 50); side = 'offer'; } // expensive demand turn-down
         else if (bot.role === 'TRADER') { mw = 40; price = 70 + Math.floor(Math.random() * 10); side = 'bid'; }
-        else if (bot.role === 'INTERCONNECTOR') { mw = 50; price = 75 + Math.floor(Math.random() * 15); side = Math.random() > 0.5 ? 'bid' : 'offer'; }
+        // Interconnector no longer submits BM bids
 
         if (mw > 0) {
             gun.get(roomKey(room, `bm_${currentSp}`)).get(bot.id).put({ id: bot.id, name: bot.name, asset: bot.asset, mw, price, side, col: bot.col, isBot: true });

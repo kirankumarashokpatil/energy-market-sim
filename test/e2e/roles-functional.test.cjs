@@ -18,8 +18,9 @@
  */
 
 const puppeteer = require('puppeteer');
+const { spawn } = require('child_process');
 
-const BASE_URL = process.env.GRIDFORGE_URL || 'http://localhost:5174';
+const BASE_URL = process.env.GRIDFORGE_URL || 'http://localhost:5173';
 const HEADLESS = process.env.HEADLESS !== 'false';
 
 const ROLES = [
@@ -37,14 +38,7 @@ const ROLES = [
     needsAsset: false,
     uiSnippet: 'TRADING DESK ANALYSIS'
   },
-  {
-    id: 'INTERCONNECTOR',
-    name: 'Interco',
-    roleLabel: 'Interconnector',
-    needsAsset: true,
-    assetType: 'IFA',
-    uiSnippet: 'Price Coupling (GB vs'
-  },
+  // Interconnector removed – flows simulated automatically by engine
   {
     id: 'DSR',
     name: 'FlexLoad',
@@ -59,8 +53,10 @@ const ROLES = [
     roleLabel: 'Battery Storage',
     needsAsset: true,
     assetType: 'Small BESS',
-    uiSnippet: 'STATE OF CHARGE (SoC)'
-  },
+    uiSnippet: 'STATE OF CHARGE (SoC)',
+    // verify additional system metrics rendered on BESS screen
+    extraCheck: 'SYS DMD'
+  }
 ];
 
 async function sleep(ms) {
@@ -113,9 +109,50 @@ async function typeInto(page, placeholder, value) {
   await input.type(value);
 }
 
+/**
+ * Starts the local Gun relay server and waits for it to be ready.
+ * Returns the child process object so it can be killed later.
+ */
+function startGunRelay() {
+  return new Promise((resolve, reject) => {
+    console.log('  [Setup] Starting local Gun relay server...');
+    const relay = spawn('node', ['gun-relay.cjs'], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let started = false;
+
+    // Listen for the specific startup message
+    relay.stdout.on('data', (data) => {
+      const output = data.toString();
+      if (!started && output.includes('Gun relay server running')) {
+        started = true;
+        console.log('  [Setup] Gun relay server is ready.');
+        resolve(relay);
+      }
+    });
+
+    relay.stderr.on('data', (data) => {
+      const output = data.toString();
+      if (output.toLowerCase().includes('error')) {
+        console.error('  [Relay Error]', output);
+      }
+    });
+
+    relay.on('error', (err) => {
+      if (!started) reject(err);
+      else console.error('  [Relay Process Error]', err);
+    });
+
+    relay.on('exit', (code) => {
+      if (!started && code !== 0) reject(new Error(`Gun relay exited with code ${code}`));
+    });
+  });
+}
+
 async function joinSingleRole(roleCfg) {
   const ROOM_CODE = 'FUNC' + Date.now().toString().slice(-6);
-  const { name, roleLabel, needsAsset, assetType, uiSnippet } = roleCfg;
+  const { name, roleLabel, needsAsset, assetType, uiSnippet, extraCheck } = roleCfg;
 
   console.log(
     `\n══════════════════════════════════════════════════════════`
@@ -142,7 +179,9 @@ async function joinSingleRole(roleCfg) {
     console.log(`[${name}] Waiting for network ready…`);
     await waitFor(
       page,
-      () => document.body.textContent.includes('Network Connected'),
+      () =>
+        document.body.textContent.includes('Network Connected') ||
+        document.body.textContent.includes('Join Session'),
       30000
     );
 
@@ -240,6 +279,16 @@ async function joinSingleRole(roleCfg) {
     console.log(
       `[${name}] ✓ Found role UI text: "${uiSnippet}"`
     );
+    if (extraCheck) {
+      console.log(`[${name}] Verifying additional snippet "${extraCheck}"…`);
+      await waitFor(
+        page,
+        (snippet) => document.body.textContent.includes(snippet),
+        15000,
+        extraCheck
+      );
+      console.log(`[${name}] ✓ Extra UI text present`);
+    }
   } finally {
     await browser.close().catch(() => { });
   }
@@ -257,7 +306,11 @@ async function joinSingleRole(roleCfg) {
     '══════════════════════════════════════════════════════════\n'
   );
 
+  let gunRelayProcess = null;
+
   try {
+    gunRelayProcess = await startGunRelay();
+
     for (const cfg of ROLES) {
       await joinSingleRole(cfg);
     }
@@ -272,6 +325,11 @@ async function joinSingleRole(roleCfg) {
       err?.message || err
     );
     process.exit(1);
+  } finally {
+    if (gunRelayProcess) {
+      console.log('\n  [Cleanup] Shutting down Gun relay server...');
+      gunRelayProcess.kill('SIGKILL');
+    }
   }
 })();
 

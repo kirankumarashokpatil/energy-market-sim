@@ -13,6 +13,18 @@ describe("MarketEngine determinism & BM clearing", () => {
     expect(s1.actual.niv).toBeCloseTo(s2.actual.niv, 10);
   });
 
+  it('includes a demandCurve array in both forecast and actual with non‑zero volumes', () => {
+    const s = marketForSp(20);
+    expect(Array.isArray(s.forecast.demandCurve)).toBe(true);
+    expect(Array.isArray(s.actual.demandCurve)).toBe(true);
+    expect(s.forecast.demandCurve.length).toBeGreaterThan(1);
+    // ensure volumes increase monotonically
+    const vols = s.forecast.demandCurve.map(p => p.mw);
+    for (let i = 1; i < vols.length; i++) {
+      expect(vols[i]).toBeGreaterThanOrEqual(vols[i-1]);
+    }
+  });
+
   it("clears BM with correct merit order and marginal flag for short system", () => {
     const market = {
       isShort: true,

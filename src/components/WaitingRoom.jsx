@@ -23,20 +23,27 @@ export default function WaitingRoom({
         const id = pid || uid();
         if (!pid) setPid(id);
 
-        // Check if we're the first player (host/instructor)
+        // Robust host election: use timestamp to break ties in race conditions
+        // If two players claim host at same time, the one with earlier timestamp wins
         const playersNode = gun.get(roomKey(room, "players"));
-        // Use a dedicated host key for robust election
         const hostNode = gun.get(roomKey(room, "host"));
-        hostNode.get('pid').once((currentHost) => {
+        const myTimestamp = Date.now();
+        
+        // Host election: only claim if there is absolutely no current host.
+        // Avoid overwriting an existing host even if our clock is earlier/stale.
+        hostNode.once((data) => {
+            const currentHost = data?.pid;
             if (!currentHost) {
-                // Try to claim host
-                hostNode.put({ pid: id }, (ack) => {
-                    // We don't strictly wait for ack to proceed with UI, 
-                    // but we verify our claim immediately following this
+                // No host present, safe to claim
+                hostNode.put({ pid: id, ts: myTimestamp }, () => {
+                    hostNode.once(v => setIsHost(v?.pid === id));
                 });
-                setIsHost(true);
             } else if (currentHost === id) {
+                // we rejoined as the original host
                 setIsHost(true);
+            } else {
+                // someone else holds host – do not override
+                setIsHost(false);
             }
         });
 
@@ -65,6 +72,14 @@ export default function WaitingRoom({
         if (!gun || !room || !pid) return;
         gun.get(roomKey(room, "players")).get(pid).put({ role });
     }, [role, gun, room, pid]);
+
+    // Sync role if the Host changed it in the database
+    useEffect(() => {
+        const dbRole = players[pid]?.role;
+        if (dbRole && dbRole !== role) {
+            setRole(dbRole);
+        }
+    }, [players, pid, role, setRole]);
 
     const copyRoom = () => {
         navigator.clipboard?.writeText(room);
@@ -96,7 +111,8 @@ export default function WaitingRoom({
         p => p && p.name && Date.now() - (p.lastSeen || 0) < 60000
     );
 
-    const roleOptions = Object.values(ROLES).filter(r => r.id !== "INSTRUCTOR");
+    // hide roles that are marked as system assets (e.g. Interconnector)
+    const roleOptions = Object.values(ROLES).filter(r => !r.isSystem && r.id !== "INSTRUCTOR");
 
     return (
         <div style={{
@@ -114,7 +130,7 @@ export default function WaitingRoom({
                     <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 28, fontWeight: 900, letterSpacing: 2, marginBottom: 8 }}>WAITING ROOM</div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 8 }}>
                         <span style={{ fontSize: 12, color: "#4d7a96" }}>Room Code:</span>
-                        <button onClick={copyRoom} style={{
+                        <button data-testid="room-code-button" onClick={copyRoom} style={{
                             background: "#0c1c2a", border: "1px solid #38c0fc44", borderRadius: 6, padding: "4px 14px",
                             fontFamily: "'JetBrains Mono'", fontSize: 18, fontWeight: 900, color: "#38c0fc", letterSpacing: 4, cursor: "pointer",
                         }}>
@@ -134,7 +150,7 @@ export default function WaitingRoom({
                     <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, color: "#38c0fc", marginBottom: 12 }}>SELECT YOUR ROLE</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
                         {roleOptions.map(r => (
-                            <button key={r.id} onClick={() => setRole(r.id)} style={{
+                            <button data-testid={`role-${r.id}`} key={r.id} onClick={() => setRole(r.id)} style={{
                                 background: role === r.id ? "#38c0fc18" : "#0c1c2a",
                                 border: `1px solid ${role === r.id ? "#38c0fc" : "#38c0fc22"}`,
                                 borderRadius: 8, padding: "10px 8px", cursor: "pointer", textAlign: "center",
@@ -142,13 +158,26 @@ export default function WaitingRoom({
                             }}>
                                 <div style={{ fontSize: 20 }}>{r.emoji}</div>
                                 <div style={{ fontSize: 10, fontWeight: 700, color: role === r.id ? "#38c0fc" : "#8ab8d0", marginTop: 4 }}>{r.name}</div>
-                                <div style={{ fontSize: 7.5, color: "#4d7a96", marginTop: 2, lineHeight: 1.4 }}>{r.desc?.split("—")[0]}</div>
+                                <div style={{ fontSize: 7.5, color: "#4d7a96", marginTop: 2, lineHeight: 1.4 }}>{r.desc}</div>
                             </button>
                         ))}
                     </div>
                 </div>
 
-                {/* Connected Players */}
+                {/* Quick Help Panel */}
+                <div style={{
+                    background: "#0a1929", border: "1px solid #38c0fc22", borderRadius: 12, padding: 20, marginBottom: 20,
+                }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, color: "#38c0fc", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                        🎮 QUICK START TIPS
+                    </div>
+                    <div style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.6, display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div><strong style={{ color: "#1de98b" }}>1. Pick a role</strong> that matches your strategy</div>
+                        <div><strong style={{ color: "#1de98b" }}>2. Click the "Learn" button</strong> (top-right) to see role strategies and market terminology</div>
+                        <div><strong style={{ color: "#1de98b" }}>3. Watch the market phases</strong> unfold: DA ➜ ID ➜ BM ➜ Settlement</div>
+                        <div><strong style={{ color: "#1de98b" }}>4. Your score is based on</strong>: profit + contribution to grid stability</div>
+                    </div>
+                </div>
                 <div style={{
                     background: "#0a1929", border: "1px solid #38c0fc22", borderRadius: 12, padding: 20, marginBottom: 20,
                 }}>
@@ -163,16 +192,45 @@ export default function WaitingRoom({
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                             {activePlayers.map((p, i) => {
                                 const r = ROLES[p.role] || ROLES.GENERATOR;
+                                const isMe = p.id === pid;
                                 return (
                                     <div key={p.id || i} style={{
                                         background: "#0c1c2a", border: "1px solid #38c0fc22", borderRadius: 8, padding: "6px 12px",
-                                        display: "flex", alignItems: "center", gap: 6,
+                                        display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", minWidth: 200
                                     }}>
-                                        <span style={{ fontSize: 14 }}>{r.emoji}</span>
-                                        <div>
-                                            <div style={{ fontSize: 10, fontWeight: 700, color: "#ddeeff" }}>{p.name}</div>
-                                            <div style={{ fontSize: 8, color: "#4d7a96" }}>{r.name}</div>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                            <span style={{ fontSize: 14 }}>{r.emoji}</span>
+                                            <div>
+                                                <div style={{ fontSize: 10, fontWeight: 700, color: "#ddeeff" }}>
+                                                    {p.name} {isMe ? "(You)" : ""}
+                                                </div>
+                                                {/* Hide the text role if the host is viewing, since they get a dropdown */}
+                                                {(!isHost) && <div style={{ fontSize: 8, color: "#4d7a96" }}>{r.name}</div>}
+                                            </div>
                                         </div>
+
+                                        {/* Host Controls: Role Override Dropdown */}
+                                        {isHost && (
+                                            <select
+                                                value={p.role || "GENERATOR"}
+                                                onChange={(e) => {
+                                                    const newRole = e.target.value;
+                                                    // Immediately update the GunDB node for that specific player
+                                                    if (gun && room) {
+                                                        gun.get(roomKey(room, "players")).get(p.id).put({ role: newRole });
+                                                    }
+                                                }}
+                                                style={{
+                                                    background: "#050e16", border: "1px solid #38c0fc44", borderRadius: 4,
+                                                    color: "#38c0fc", fontSize: 9, padding: "4px", outline: "none", cursor: "pointer",
+                                                    fontWeight: 700, fontFamily: "'Outfit'"
+                                                }}
+                                            >
+                                                {roleOptions.map(opt => (
+                                                    <option key={opt.id} value={opt.id}>{opt.name}</option>
+                                                ))}
+                                            </select>
+                                        )}
                                     </div>
                                 );
                             })}
@@ -225,13 +283,13 @@ export default function WaitingRoom({
 
                 {/* Action Buttons */}
                 <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-                    <button onClick={() => setScreen("lobby")} style={{
+                    <button data-testid="waitingroom-back" onClick={() => setScreen("lobby")} style={{
                         padding: "12px 28px", background: "#0c1c2a", border: "1px solid #38c0fc33", borderRadius: 8,
                         color: "#4d7a96", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit'",
                     }}>
                         ← Back
                     </button>
-                    <button onClick={handleStart} style={{
+                    <button data-testid="waitingroom-proceed" onClick={handleStart} style={{
                         padding: "12px 36px", background: "linear-gradient(135deg, #38c0fc22, #b78bfa22)",
                         border: "1px solid #38c0fc66", borderRadius: 8, color: "#38c0fc", fontSize: 13,
                         fontWeight: 800, cursor: "pointer", fontFamily: "'Outfit'", letterSpacing: 1,

@@ -1,5 +1,4 @@
-// ─── ACHIEVEMENTS ENGINE ───
-// Tracks player accomplishments throughout the game session
+import { MIN_SOC, MAX_SOC } from '../shared/constants.js';
 
 export const ACHIEVEMENTS = [
     // BM mastery
@@ -75,27 +74,22 @@ export const ACHIEVEMENTS = [
     },
 ];
 
-/**
- * Build stats object from game state for achievement checking
- */
 export function buildAchievementStats({ spHistory, cash, daCash, assetKey, assetKind, scenario, soc, freqBreachSec }) {
     const totalSPs = spHistory.length;
     const accepted = spHistory.filter(h => h.accepted);
     const totalAccepted = accepted.length;
-    const totalRevenue = cash + daCash;
+    const totalRevenue = cash; // Using cash directly as it now includes settled DA
     const bestSingleSP = accepted.length ? Math.max(...accepted.map(h => h.revenue)) : 0;
 
-    // Streak calculation
     let streak = 0;
     for (let i = spHistory.length - 1; i >= 0; i--) {
         if (spHistory[i].accepted) streak++;
         else break;
     }
 
-    // SoC limit check (simplified — check if SoC ever reached 10% or 90%)
-    const hitSoCLimit = soc <= 11 || soc >= 89;
+    // Dynamic limit check based on shared constants
+    const hitSoCLimit = soc <= (MIN_SOC + 1) || soc >= (MAX_SOC - 1);
 
-    // Buy/sell flip detection (simplified)
     const hadBuySellFlip = spHistory.length >= 3 &&
         spHistory.slice(-3).some(h => h.accepted && !h.isShort) &&
         spHistory.slice(-3).some(h => h.accepted && h.isShort);
@@ -108,14 +102,11 @@ export function buildAchievementStats({ spHistory, cash, daCash, assetKey, asset
     };
 }
 
-/**
- * Check which new achievements have been earned
- */
 export function checkAchievements(stats, alreadyEarned) {
     const newlyEarned = [];
     for (const a of ACHIEVEMENTS) {
         if (alreadyEarned.includes(a.id)) continue;
-        try { if (a.check(stats)) newlyEarned.push(a); } catch { /* skip */ }
+        try { if (a.check(stats)) newlyEarned.push(a); } catch { }
     }
     return newlyEarned;
 }

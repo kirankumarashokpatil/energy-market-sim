@@ -183,7 +183,6 @@ HEADLESS=false node test_multiplayer.cjs
 - [GeneratorScreen.jsx](./src/components/roles/GeneratorScreen.jsx) - Button disable conditions
 - [DsrScreen.jsx](./src/components/roles/DsrScreen.jsx) - Button disable conditions
 - [BessScreen.jsx](./src/components/roles/BessScreen.jsx) - Button disable conditions
-- [InterconnectorScreen.jsx](./src/components/roles/InterconnectorScreen.jsx) - Button disable conditions
 
 ## Debugging Tips
 

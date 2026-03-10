@@ -19,7 +19,7 @@ import GeneratorScreen from './components/roles/GeneratorScreen';
 import SupplierScreen from './components/roles/SupplierScreen';
 import TraderScreen from './components/roles/TraderScreen';
 import DsrScreen from './components/roles/DsrScreen';
-import InterconnectorScreen from './components/roles/InterconnectorScreen';
+// Interconnector is now a system asset, not a player role; its screen is no longer imported
 import BessScreen from './components/roles/BessScreen';
 import WaitingRoom from './components/WaitingRoom';
 
@@ -49,6 +49,18 @@ function AnimatedPL({ value, size = 15 }) {
   const [bump, setBump] = useState(false); const prevRef = useRef(value);
   useEffect(() => { if (value !== prevRef.current) { setBump(true); setTimeout(() => setBump(false), 400); prevRef.current = value; } }, [value]);
   return <span className={bump ? "pl-bump" : ""} style={{ fontFamily: "'JetBrains Mono'", fontSize: size, fontWeight: 900, color: value >= 0 ? "#1de98b" : "#f0455a", display: "inline-block" }}>{fpp(value)}</span>;
+}
+
+/* ─── CONNECTIVITY INDICATOR ─── */
+function ConnectivityIndicator({ ready }) {
+  const status = ready === true ? "Online" : ready === "error" ? "Error" : "Connecting";
+  const col = ready === true ? "#1de98b" : ready === "error" ? "#f0455a" : "#f5b222";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, background: `${col}15`, border: `1px solid ${col}44`, padding: "4px 10px", borderRadius: 20 }}>
+      <div style={{ width: 8, height: 8, borderRadius: "50%", background: col, boxShadow: `0 0 10px ${col}aa` }} className={ready === true ? "" : "pulse"} />
+      <span style={{ fontSize: 10, fontWeight: 800, color: col, textTransform: "uppercase", letterSpacing: 0.5 }}>{status}</span>
+    </div>
+  );
 }
 
 /* ─── ROOT APP ─── */
@@ -170,7 +182,7 @@ export default function App() {
   useEffect(() => {
     if (screen !== "game" || !gun.current || !room) return;
     gun.current.get(roomKey(room, "players")).map().on((data, id) => { if (data && id && data.name) setPlayers(p => ({ ...p, [id]: { ...data, id } })); });
-    
+
     const metaRef = gun.current.get(roomKey(room, "meta"));
     metaRef.on(data => {
       if (data?.scenarioId) setRoomScenario(data.scenarioId);
@@ -183,7 +195,7 @@ export default function App() {
       if (data?.tickSpeed) setTickSpeed(data.tickSpeed);
       if (data?.paused !== undefined) setPaused(data.paused);
     });
-    
+
     // CRITICAL FIX: For late joiners, also read current value to catch in-flight updates
     // This ensures that if the host advanced phase before all subscriptions were ready,
     // late joiners will still see the current phase.
@@ -193,7 +205,7 @@ export default function App() {
         setPhase(data.phase);
       }
     });
-    
+
     gun.current.get(roomKey(room, "forecast")).on((data) => {
       console.log('[App.jsx] Received forecast data from GunDB:', data ? Object.keys(data) : 'null');
       if (data && data.json) {
@@ -244,7 +256,7 @@ export default function App() {
       gun.current.get(roomKey(room, "meta")).put({ scenarioId });
     }
     setScreen("game");
-  }, [screen]);
+  }, [screen, gun, room]);
 
   useEffect(() => {
     if (screen !== "game" || !gun.current || !room || !sp) return;
@@ -347,7 +359,7 @@ export default function App() {
       if (myDa) {
         const pos = myDa.side === "offer" ? myDa.mwAcc : -myDa.mwAcc;
         setContractPosition(pos);
-        const daRev = +(myDa.mwAcc * daRes.cp * 0.5).toFixed(2); // Keep existing multiplier
+        const daRev = +(myDa.mwAcc * daRes.cp * SP_DURATION_H).toFixed(2); // Keep existing multiplier
         setDaCash(prev => prev + daRev);
         setDaResult({ accepted: true, revenue: daRev, cp: daRes.cp, mw: myDa.mwAcc });
         addToast({ emoji: "📋", title: "DA Auction Cleared", body: `Position: ${pos > 0 ? "+" : ""}${f0(pos)}MW @ £${f1(daRes.cp)}`, col: "#f5b222" });
@@ -426,11 +438,14 @@ export default function App() {
       const newS = mine ? updateSoF(myDef, s, mine.mwAcc, market.actual.isShort) : s;
       setSoc(newS);
 
-      // Check for startup cost
+      // Check for startup cost: charge only if asset was OFFLINE before BM cleared
+      // Instead of checking if it had a BM bid in previous SP, check if it was actually ONLINE
       let startupDeduction = 0;
       if (mine && myDef.startupCost) {
-        const prevSpAccepted = spContracts[old.sp - 1]?.[id]?.bmAccepted;
-        if (!prevSpAccepted) {
+        const prevSpPhysical = spContracts[old.sp - 1]?.[id]?.physicalAtEndOfSp;
+        const wasOnlineBefore = prevSpPhysical?.status === "ONLINE";
+        if (!wasOnlineBefore) {
+          // Asset was OFFLINE or STARTING in previous SP, now accepted in BM = startup event
           startupDeduction = myDef.startupCost;
         }
       }
@@ -464,8 +479,8 @@ export default function App() {
           if (!next[settleSp]) next[settleSp] = {};
           Object.values(refs.current.players || {}).forEach(p => {
             const c = next[settleSp][p.id] || {};
-            const pDaRev = c.daMw ? (c.daSide === "offer" ? c.daMw * c.daPrice * 0.5 : -c.daMw * c.daPrice * 0.5) : 0;
-            const pIdRev = c.idMw ? (c.idSide === "offer" ? c.idMw * c.idPrice * 0.5 : -c.idMw * c.idPrice * 0.5) : 0;
+            const pDaRev = c.daMw ? (c.daSide === "offer" ? c.daMw * c.daPrice * SP_DURATION_H : -c.daMw * c.daPrice * SP_DURATION_H) : 0;
+            const pIdRev = c.idMw ? (c.idSide === "offer" ? c.idMw * c.idPrice * SP_DURATION_H : -c.idMw * c.idPrice * SP_DURATION_H) : 0;
             const pBmRev = c.bmAccepted?.rev || 0;
 
             const pContractPosMw = (c.daSide === "offer" ? (c.daMw || 0) : -(c.daMw || 0)) + (c.idSide === "offer" ? (c.idMw || 0) : -(c.idMw || 0));
@@ -479,12 +494,18 @@ export default function App() {
             const baseSettle = computeImbalanceSettlement({
               actualPhysicalMw: pActualPhysical,
               contractedMw: pContractPosMw,
+              bmAcceptedMw: pActualPosMw,
               sbp: settledMarket.actual.sbp,
               ssp: settledMarket.actual.ssp,
               spDurationH: SP_DURATION_H,
             });
             // Tutorial forgiveness scales the imbalance cash, but preserves sign
             const imbCash = baseSettle.cash * (isForgive ? (FORGIVENESS.penaltyMultiplier || 0.5) : 1);
+
+            const pDef = { ...ASSETS[p.assetKey || p.asset], ...(p.assetConfig || {}) };
+            const varCostMwh = pDef.varCost || pDef.wear || 0;
+            const operatingCost = -(Math.abs(pActualPhysical) * varCostMwh * SP_DURATION_H);
+            const startupCost = c.startupOccurred ? -(pDef.startupCost || 0) : 0;
 
             c.physicalMw = pActualPhysical;
             c.settlement = {
@@ -493,7 +514,9 @@ export default function App() {
               daCash: pDaRev,
               idCash: pIdRev,
               bmCash: pBmRev,
-              totalCash: pDaRev + pIdRev + pBmRev + imbCash,
+              operatingCost,
+              startupCost,
+              totalCash: pDaRev + pIdRev + pBmRev + imbCash + operatingCost + startupCost,
             };
             next[settleSp][p.id] = c;
           });
@@ -520,8 +543,8 @@ export default function App() {
 
         // Apply local results for current user
         const myC = refs.current.spContracts[sp]?.[id] || {};
-        const daRev = myC.daMw ? (myC.daSide === "offer" ? myC.daMw * myC.daPrice * 0.5 : -myC.daMw * myC.daPrice * 0.5) : 0;
-        const idRev = myC.idMw ? (myC.idSide === "offer" ? myC.idMw * myC.idPrice * 0.5 : -myC.idMw * myC.idPrice * 0.5) : 0;
+        const daRev = myC.daMw ? (myC.daSide === "offer" ? myC.daMw * myC.daPrice * SP_DURATION_H : -myC.daMw * myC.daPrice * SP_DURATION_H) : 0;
+        const idRev = myC.idMw ? (myC.idSide === "offer" ? myC.idMw * myC.idPrice * SP_DURATION_H : -myC.idMw * myC.idPrice * SP_DURATION_H) : 0;
         const bmRev = myC.bmAccepted?.rev || 0;
 
         const myDef = { ...ASSETS[ak], ...(refs.current.assetConfig || {}) };
@@ -567,7 +590,16 @@ export default function App() {
         }
 
         if (market.actual.trippedAssets?.includes(ak)) {
-          actualPhysical = 0;
+          // BUG FIX: For DSR with pending rebound debt, don't zero out - set forced rebound state
+          const isDsr = myDef.kind === "dsr";
+          if (isDsr && pState.pendingReboundMwh > 0 && pState.reboundSpsRemaining === 0) {
+            // Force rebound mode to continue consuming their debt
+            pState.reboundSpsRemaining = pState.reboundDuration || 1;
+            // actualPhysical will be recalculated in DSR rebound logic below
+          } else {
+            // For non-DSR or DSR without rebound obligation, zero output
+            actualPhysical = 0;
+          }
           if (isGenerator) {
             setPhysicalState(prev => ({ ...prev, status: "OFFLINE", currentMw: 0 }));
           }
@@ -655,54 +687,37 @@ export default function App() {
         // Bug #9 fix: signed deviation — over-delivery (positive into short) should earn, not penalize
         const forgiveMult = isForgive ? (FORGIVENESS.penaltyMultiplier || 0.5) : 1;
         const imbPen = deviation >= 0
-          ? (deviation * market.actual.ssp * 0.5 * forgiveMult)   // Over-delivery: sell excess at SSP
-          : (deviation * market.actual.sbp * 0.5 * forgiveMult);  // Under-delivery: buy shortfall at SBP
+          ? (deviation * market.actual.ssp * SP_DURATION_H * forgiveMult)   // Over-delivery: sell excess at SSP
+          : (deviation * market.actual.sbp * SP_DURATION_H * forgiveMult);  // Under-delivery: buy shortfall at SBP
 
         // Deduct Variable Cost (Fuel/Wear) - Note: storage 'wear' is based on throughput (absolute MW)
         const varCostMwh = myDef.varCost || myDef.wear || 0;
-        const operatingCost = -(Math.abs(actualPhysical) * varCostMwh * 0.5);
+        const operatingCost = -(Math.abs(actualPhysical) * varCostMwh * SP_DURATION_H);
 
+        // Interconnector is now a system asset; congestion revenue handled by engine if needed
         let congestionRev = 0;
-        if (refs.current.role === "INTERCONNECTOR") {
-          const fpk = myDef.foreignPriceKey;
-          const foreignPrice = fpk ? market.actual[fpk] : (market.actual.priceFR || 45);
-          const spreadFC = market.actual.baseRef - foreignPrice;
-
-          // Use actual physical flow — respects trip events and ramp limits.
-          // If tripped (actualPhysical === 0), no congestion revenue earned.
-          // Otherwise flow at full cable capacity (implicit coupling).
-          const mwFlow = market.actual.trippedAssets?.includes(ak) ? 0 : (myDef.maxMW || 1000);
-          const lossF = myDef.lossFactor || 0.03;
-
-          // Physical arbitrage: buy in the cheap market, sell in the expensive market, minus heat losses.
-          if (mwFlow > 0) {
-            if (spreadFC > 0) {
-              // IMPORT to GB: Buy in foreign, sell in GB (with losses)
-              const cost = mwFlow * foreignPrice * 0.5;
-              const rev = (mwFlow * (1 - lossF)) * market.actual.baseRef * 0.5;
-              congestionRev = +(rev - cost).toFixed(2);
-            } else if (spreadFC < 0) {
-              // EXPORT from GB: Buy in GB, sell in foreign (with losses)
-              const cost = mwFlow * market.actual.baseRef * 0.5;
-              const rev = (mwFlow * (1 - lossF)) * foreignPrice * 0.5;
-              congestionRev = +(rev - cost).toFixed(2);
-            }
-            // spreadFC === 0: No arbitrage opportunity, no revenue
-          }
-        }
 
         const totalSpRev = daRev + idRev + bmRev + imbPen + congestionRev + operatingCost + bsuoSCharge;
         let newC = refs.current.cash + totalSpRev;
 
         // Margin liquidation for traders
-        if (role === "TRADER" && newC < ROLES.TRADER.marginFloor) {
-          const loss = ROLES.TRADER.marginFloor - newC;
-          newC = ROLES.TRADER.marginFloor;
+        if (role === "TRADER" && (newC + refs.current.daCash) < ROLES.TRADER.marginFloor) {
+          const loss = ROLES.TRADER.marginFloor - (newC + refs.current.daCash);
+          newC = ROLES.TRADER.marginFloor - refs.current.daCash;
           setContractPosition(0); // Liquidate position
           addToast({ emoji: "💥", title: "Margin Call", body: `Cash fell below margin floor. Position liquidated. Loss: £${f0(loss)}`, col: "#f0455a" });
         }
 
         setCash(newC);
+
+        // Store physical state at end of settlement for next SP's startup cost determination
+        setSpContracts(prev => {
+          const next = { ...prev };
+          if (!next[sp]) next[sp] = {};
+          if (!next[sp][id]) next[sp][id] = {};
+          next[sp][id].physicalAtEndOfSp = { status: pState.status, currentMw: pState.currentMw };
+          return next;
+        });
 
         if (imbPen < -5) {
           setImbalancePenalty(prev => prev + Math.abs(imbPen));
@@ -904,7 +919,7 @@ export default function App() {
     const activePlayers = Object.values(players).filter(p => p && p.name && Date.now() - (p.lastSeen || 0) < 120000)
       .map(p => ({
         ...p,
-        cash: (p.cash || 0) + (p.daCash || 0),
+        cash: (p.cash || 0),
         roleScore: p.roleScore || playerScores[p.id]?.roleScore || 0,
         systemScore: p.systemScore || playerScores[p.id]?.systemScore || 50,
         overallScore: p.overallScore || playerScores[p.id]?.overallScore || 0,
@@ -921,9 +936,15 @@ export default function App() {
     // When joining from Lobby, go to Waiting Room
     setScreen("waiting_room");
   }} />;
-  if (screen === "waiting_room") return <WaitingRoom gun={gun.current} room={room} name={name} pid={pid || uid()} setPid={setPid} role={role} setRole={setRole} setScreen={setScreen} isHost={isInstructor} setIsHost={setIsInstructor} gameMode={gameMode} setGameMode={setGameMode} scenarioId={scenarioId} setScenarioId={setScenarioId} players={players} />;
+  if (screen === "waiting_room") return <WaitingRoom gun={gun.current} gunReady={ready} room={room} name={name} pid={pid || uid()} setPid={setPid} role={role} setRole={setRole} setScreen={setScreen} isHost={isInstructor} setIsHost={setIsInstructor} gameMode={gameMode} setGameMode={setGameMode} scenarioId={scenarioId} setScenarioId={setScenarioId} players={players} />;
   if (screen === "asset") return <AssetScreen onSelect={handleJoin} playerName={name} room={room} scenario={sc} role={role} />;
-  if (screen === "game_no_asset") return null; // Handled by useEffect below
+  if (screen === "game_no_asset") return (
+    <div style={{ background: "#050e16", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", color: "#38c0fc" }}>
+      <div style={{ fontSize: 32, marginBottom: 16 }}>⚡</div>
+      <div style={{ fontSize: 14, fontWeight: 700 }}>Joining game...</div>
+      <div style={{ fontSize: 11, color: "#4d7a96", marginTop: 8 }}>Setting up your role</div>
+    </div>
+  );
 
 
   // ─── BLACKOUT OVERLAY (System Failure Rule — §7) ───
@@ -950,6 +971,16 @@ export default function App() {
   );
 
   const renderRoleScreen = () => {
+    // Guard against null market - role screens expect market data
+    if (!market) {
+      return (
+        <div style={{ background: "#050e16", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", color: "#38c0fc" }}>
+          <div style={{ fontSize: 32, marginBottom: 16 }}>⚡</div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>Loading market data...</div>
+          <div style={{ fontSize: 11, color: "#4d7a96", marginTop: 8 }}>Initializing game state</div>
+        </div>
+      );
+    }
     const commonProps = {
       market, sp, msLeft, phase, tickSpeed, spContracts, pid, cash, daCash, spHistory, leaderboard, assetKey: asset,
       myBid, setMyBid, submitted, onSubmit: submitBid,
@@ -957,6 +988,7 @@ export default function App() {
       idMyOrder, setIdMyOrder, idSubmitted, onIdSubmit: submitIdOrder,
       idOrderBook: Object.values(idOrderBook).filter(b => b && b.mw),
       daOrderBook: Object.values(daOrderBook).filter(b => b && b.mw),
+      daResult, currentSp: sp, simRes: lastRes, bmOrderBook: allBids,
       allBids, lastRes, forecasts, publishedForecast, playerName: name, room, scenario: sc,
       isInstructor, paused, freqBreachSec, contractPosition, imbalancePenalty, earnedAchievements, gameMode, role,
       onTickSpeedChange: instructorSetSpeed, onPauseToggle: instructorTogglePause, onNextPhase: instructorNextPhase,
@@ -982,7 +1014,7 @@ export default function App() {
       case "BESS": return <BessScreen {...commonProps} />;
       case "SUPPLIER": return <SupplierScreen {...commonProps} />;
       case "TRADER": return <TraderScreen {...commonProps} />;
-      case "INTERCONNECTOR": return <InterconnectorScreen {...commonProps} />;
+      // INTERCONNECTOR role is no longer available; system handles flows automatically
       case "DSR": return <DsrScreen {...commonProps} />;
       default: return <GeneratorScreen {...commonProps} />;
     }
@@ -991,6 +1023,9 @@ export default function App() {
   return (
     <>
       <ToastContainer toasts={toasts} />
+      <div style={{ position: "fixed", top: 12, right: 12, zIndex: 10001 }}>
+        <ConnectivityIndicator ready={ready} />
+      </div>
       {renderRoleScreen()}
     </>
   );
@@ -1041,9 +1076,8 @@ function LobbyScreen({ name, setName, room, setRoom, gunReady, onNext }) {
       {/* RIGHT: Join Form Panel */}
       <div style={{ flex: "0 0 450px", background: "#061019", borderLeft: "1px solid #162c3d", display: "flex", flexDirection: "column", justifyContent: "center", padding: "48px", position: "relative", zIndex: 10, boxShadow: "-10px 0 40px #000000" }}>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 40, padding: "10px 16px", background: "#0c1c2a", borderRadius: 8, border: "1px solid #1a3045" }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: gunReady === true ? "#1de98b" : gunReady === "error" ? "#f0455a" : "#f5b222", flexShrink: 0, boxShadow: `0 0 8px ${gunReady === true ? "#1de98b" : "#f0455a"}` }} className={gunReady === true ? "" : "blink"} />
-          <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>{gunReady === true ? "Network Connected" : gunReady === "error" ? "Network Error" : "Connecting..."}</div>
+        <div style={{ marginBottom: 40 }}>
+          <ConnectivityIndicator ready={gunReady} />
         </div>
 
         <h2 style={{ margin: "0 0 32px 0", color: "#ffffff", fontSize: 28, fontWeight: 800 }}>Join Session</h2>
@@ -1086,6 +1120,7 @@ function LobbyScreen({ name, setName, room, setRoom, gunReady, onNext }) {
         </div>
 
         <button
+          data-testid="join-waiting-room"
           onClick={onNext}
           disabled={!canProceed}
           style={{
@@ -1141,7 +1176,7 @@ function AssetScreen({ onSelect, playerName, room, scenario, role }) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 10 }}>
           {Object.values(role === "SUPPLIER" ? SUPPLIERS : ASSETS).filter(a => {
-            if (role === "INTERCONNECTOR") return a.kind === "interconnector";
+            // INTERCONNECTOR role no longer exists; treated as system asset so filter not needed
             if (role === "BESS") return a.kind === "soc";
             if (role === "GENERATOR") return a.kind !== "interconnector" && a.kind !== "soc" && a.key !== "DSR";
             return true;
@@ -1471,7 +1506,7 @@ function AssetPanel({ market, soc, cash, daCash, myBid, setMyBid, submitted, onS
               <div style={{ fontSize: 7.5, color: "#2a5570", marginBottom: 4, textTransform: "uppercase", letterSpacing: .6 }}>Live Simulation Preview</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
                 <div><div style={{ fontSize: 7, color: "#2a5570" }}>MERIT RANK</div><div style={{ fontSize: 12, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: previewRank < 3 ? "#1de98b" : "#f5b222" }}>#{previewRank + 1}</div></div>
-                <div><div style={{ fontSize: 7, color: "#2a5570" }}>EST. REVENUE</div><div style={{ fontSize: 12, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: previewMine ? "#1de98b" : "#4d7a96" }}>{previewMine ? `+£${f0(previewMine.mwAcc * (previewRes?.cp || 0) * 0.5)}` : "—"}</div></div>
+                <div><div style={{ fontSize: 7, color: "#2a5570" }}>EST. REVENUE</div><div style={{ fontSize: 12, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: previewMine ? "#1de98b" : "#4d7a96" }}>{previewMine ? `+£${f0(previewMine.mwAcc * (previewRes?.cp || 0) * SP_DURATION_H)}` : "—"}</div></div>
                 <div><div style={{ fontSize: 7, color: "#2a5570" }}>OUTCOME</div><div style={{ fontSize: 9, fontWeight: 700, color: previewMine ? "#1de98b" : "#f0455a" }}>{previewMine ? "✓ ACCEPT" : "✗ REJECT"}</div></div>
               </div>
               {previewMine && previewRes?.cp > pn && isShort && <div style={{ fontSize: 7.5, color: "#38c0fc", marginTop: 3 }}>↑ Uniform price lifts your £{myBid.price} → £{f1(previewRes.cp)}</div>}
@@ -1585,7 +1620,7 @@ function LeaderboardTab({ leaderboard, pid }) {
         const rs = p.roleScore || 0;
         const ss = p.systemScore || 50;
         const os = p.overallScore || 0;
-        const total = p.cash || ((p.cash || 0) + (p.daCash || 0));
+        const total = p.cash || 0;
         const roleDef = ROLES[p.role];
         const rank = p.rank || (i + 1);
         const rankLabel = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;

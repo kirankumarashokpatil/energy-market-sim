@@ -16,12 +16,13 @@ import puppeteer from 'puppeteer';
         await page.goto('http://localhost:5173');
         await page.waitForTimeout(1000);
 
-        console.log("Clicking Interconnector...");
-        const roles = await page.$$('div');
-        for (const r of roles) {
-            const text = await page.evaluate(el => el.textContent, r);
-            if (text.includes('Interconnector') && text.includes('Cross-border')) {
-                await r.click();
+        console.log("Clicking a role card (Generator by default)...");
+        // simply pick the first visible role card (usually Generator)
+        const roleBtns = await page.$$('button');
+        for (const b of roleBtns) {
+            const text = await page.evaluate(el => el.textContent, b);
+            if (text.match(/Generator|System Operator|Supplier/)) {
+                await b.click();
                 break;
             }
         }
@@ -43,11 +44,11 @@ import puppeteer from 'puppeteer';
         }
         await page.waitForTimeout(1000);
 
-        console.log("Clicking IFA2...");
-        const assets = await page.$$('div');
-        for (const a of assets) {
-            const text = await page.evaluate(el => el.textContent, a);
-            if (text.includes('IFA2 (France)') && text.includes('1000MW')) {
+        // optionally pick an asset if one appears (e.g. OCGT generator)
+        const assetCards = await page.$$('button');
+        for (const a of assetCards) {
+            const txt = await page.evaluate(el => el.textContent, a);
+            if (txt.match(/OCGT|BESS|Battery/)) {
                 await a.click();
                 break;
             }

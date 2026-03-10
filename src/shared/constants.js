@@ -23,27 +23,27 @@ export const SYSTEM_PARAMS = {
     // NESOScreen currently shows: 35 + Math.abs(niv) / 1000
     // This constant is grid reference baseline; actual displayed value comes from MarketEngine
     baseDemandGW: 35,
-    
+
     // Wind capacity (GW) — from ASSETS config, not static display
     maxWindGW: 12,
-    
+
     // Frequency operating band (Hz)
     freqNominal: 50.0,
     freqBandLow: 49.8,
     freqBandHigh: 50.2,
-    
+
     // Reserve margin threshold (%)
     reserveMarginThreshold: 15,
-    
+
     // Dynamic Containment service capacity (MW)
     dcCapacityMW: 500,
-    
+
     // Frequency Response available capacity (MW) when within freq band
     freqResponseCapacityMW: 75,
-    
+
     // Value of Lost Load (£/MWh) — scarcity pricing cap
     VoLL: 6000,
-    
+
     // Interconnector flows (GW) — MUST be calculated from asset state, not static
     interconnectorFlows: {
         IFA: 2.0,    // IFA → EU
@@ -51,11 +51,11 @@ export const SYSTEM_PARAMS = {
         BRITNED: 1.0, // BritNed → NL
         VIKING: 1.4,  // Viking Link → DK
     },
-    
+
     // Trading margin parameters (£)
     traderStartCapitalBonus: 5000,
     marginWarningThreshold: 1000,
-    
+
     // Bid strategy multipliers (not user input, default placeholders)
     // These should NOT be hardcoded in UI; shown as hints only
     bidStrategyMultipliers: {
@@ -64,7 +64,7 @@ export const SYSTEM_PARAMS = {
         dsrBM: { sspMultiplier: 0.8, sbpMultiplier: 1.5 },    // Different: DSR-specific
         icBM: { sbpMultiplier: 0.8, sspMultiplier: 1.2 },     // Interconnector
     },
-    
+
     // Map display constants (UI only, not game logic)
     mapProjection: {
         scale: 2200,
@@ -101,22 +101,76 @@ export const ID_WINDOW_MS = 4000;  // intraday trading window (ms within a tick)
 
 // ─── ROLES (§5) ───
 export const ROLES = {
-    NESO: { id: "NESO", name: "System Operator", emoji: "🎯", desc: "System Operator & Market Operator — clear DA/ID auctions, manage real-time balancing, dispatch BM", canOwnAssets: false, canTrade: false, hasDemand: false, isOperator: true },
-    ELEXON: { id: "ELEXON", name: "Elexon", emoji: "📊", desc: "Settlement body — calculate imbalance charges, verify metering, reconcile P&L", canOwnAssets: false, canTrade: false, hasDemand: false, isSettlement: true },
-    GENERATOR: { id: "GENERATOR", name: "Generator", emoji: "⚡", desc: "Produce power — bid into BM", canOwnAssets: true, canTrade: true, hasDemand: false },
-    SUPPLIER: { id: "SUPPLIER", name: "Supplier", emoji: "🏢", desc: "Hedge for retail customers", canOwnAssets: false, canTrade: true, hasDemand: true },
-    TRADER: { id: "TRADER", name: "Trader", emoji: "💼", desc: "Trade contracts — no physical assets", canOwnAssets: false, canTrade: true, hasDemand: false, startCapital: 5000, marginFloor: 0 },
-    INTERCONNECTOR: { id: "INTERCONNECTOR", name: "Interconnector", emoji: "🔌", desc: "Cross-border HVDC link — arbitrage European prices", canOwnAssets: true, canTrade: true, hasDemand: false },
-    DSR: { id: "DSR", name: "Demand Controller", emoji: "🏗️", desc: "Manage load — curtail when profitable", canOwnAssets: true, canTrade: true, hasDemand: true },
-    BESS: { id: "BESS", name: "Battery Storage", emoji: "🔋", desc: "Charge when cheap, discharge when expensive", canOwnAssets: true, canTrade: true, hasDemand: false },
-    INSTRUCTOR: { id: "INSTRUCTOR", name: "Instructor", emoji: "🎓", desc: "Control game — admin view, never visible to players", canOwnAssets: true, canTrade: false, hasDemand: false },
+    NESO: {
+        id: "NESO", name: "System Operator", emoji: "🎯",
+        desc: "System Operator & Market Operator — clear DA/ID auctions, manage real-time balancing, dispatch BM. WIN: Keep frequency stable at lowest cost.",
+        canOwnAssets: false, canTrade: false, hasDemand: false, isOperator: true,
+        hint: "Your sole job: dispatch BM efficiently. Minimize total SBP+SSP costs while maintaining 50 Hz. Winners dispatch the most value with fewest bids rejected.",
+        guide: "As NESO, you clear all markets deterministically by price. Your score reflects market efficiency: how well you balanced supply/demand and what prices you accepted. Study the merit order to find cheap flexibility, and always consider frequency breach risk when calling bids.",
+    },
+    ELEXON: {
+        id: "ELEXON", name: "Elexon", emoji: "📊",
+        desc: "Settlement body — calculate imbalance charges, verify metering, reconcile P&L. WIN: Ensure fair settlement.",
+        canOwnAssets: false, canTrade: false, hasDemand: false, isSettlement: true,
+        hint: "You compute imbalance penalties and settlement reports. Your score reflects accuracy and fairness: all players' cash should sum correctly, with zero 'money creation' errors.",
+        guide: "Elexon watches the blockchain of all trades and ensures each player pays/receives the correct amount. Your role is observational. Study the settlement formulas to understand how players earn/lose cash.",
+    },
+    GENERATOR: {
+        id: "GENERATOR", name: "Generator", emoji: "⚡",
+        desc: "Produce power — bid into BM. WIN: Maximize revenue by bidding into profitable markets when asked.",
+        canOwnAssets: true, canTrade: true, hasDemand: false,
+        hint: "Lock a profitable DA price, then use ID/BM to capture upside. Default bid if you think you'll be short at settlement. Higher bids = higher revenue if called, but lower acceptance risk.",
+        guide: "Generators win by being profitable at high prices (SBP) while avoiding penalties (SSP). DA gives you a baseline, ID lets you adjust, and BM is your final defense against imbalance.",
+    },
+    SUPPLIER: {
+        id: "SUPPLIER", name: "Supplier", emoji: "🏢",
+        desc: "Hedge for retail customers. WIN: Buy cheap power and sell it at profitable retail margins.",
+        canOwnAssets: false, canTrade: true, hasDemand: true,
+        hint: "You MUST meet demand every SP or pay SSP penalties. Lock coverage in DA, adjust in ID, refine in BM. Worst case: lose margin on retail contracts when wholesale gets expensive.",
+        guide: "Suppliers live on margin shrinkage: if wholesale spikes above your retail price, you lose. Hedge by buying DA/ID even if it looks expensive. SSP penalties exceed any margin you earn.",
+    },
+    TRADER: {
+        id: "TRADER", name: "Trader", emoji: "💼",
+        desc: "Trade contracts — no physical assets. WIN: Close your position before BM gate closure.",
+        canOwnAssets: false, canTrade: true, hasDemand: false, startCapital: 5000, marginFloor: 0,
+        hint: "You have no physical assets, so you MUST exit your contract by BM gate or face imbalance penalties. Maximum leverage: use DA as a spread trade, then close in ID.",
+        guide: "Traders are market-makers: you profit from spreads, not from being right on direction. DA/ID liquidity attracts you, but BM is a penalty box. Risk: margin call if prices move against you.",
+    },
+    INTERCONNECTOR: {
+        id: "INTERCONNECTOR", name: "Interconnector", emoji: "🔌",
+        desc: "Cross-border HVDC link — arbitrage European prices. WIN: Buy cheap, sell dear across borders.",
+        canOwnAssets: true, canTrade: true, hasDemand: false, isSystem: true,
+        hint: "[System Role] Interconnectors trade on continental price spreads. If GB is short (high NIV), you want to export at high SBP. If GB is long (low NIV), you import at low SSP.",
+        guide: "Interconnectors have unlimited export/import capacity but limited by HVDC thermal ratings. They naturally balance UK without being asked, earning arbitrage spreads.",
+    },
+    DSR: {
+        id: "DSR", name: "Demand Controller", emoji: "🏗️",
+        desc: "Manage load — curtail when profitable. WIN: Curtail only during high-price SPs to maximize revenue.",
+        canOwnAssets: true, canTrade: true, hasDemand: true,
+        hint: "Curtailing is FREE but triggers a +120% forced rebound next SP. Only worthwhile if this SP's SBP >> next SP's price. Misjudge rebound and you'll lose money.",
+        guide: "DSRs win by market timing: curtail when desperation prices (SBP) spike, but avoid rebounding into another spike. Maximum curtail is 1 hour (2 SPs); rebound debt accumulates if you keep curtailing.",
+    },
+    BESS: {
+        id: "BESS", name: "Battery Storage", emoji: "🔋",
+        desc: "Charge when cheap, discharge when expensive. WIN: Buy low-cost power, store it, sell high.",
+        canOwnAssets: true, canTrade: true, hasDemand: false,
+        hint: "Your SoC is your inventory. Lock DA price to define cost base, use ID to optimize, and dispatch in BM when SSP/SBP justify throughput. Efficiency tax: 10% round-trip.",
+        guide: "BESS players win through arbitrage: buy DA at £40, discharge in BM at £90 (£50 margin). SoC management is critical: if you're empty when prices spike (short), you lose the bid. If full when they drop (long), you miss charging.",
+    },
+    INSTRUCTOR: {
+        id: "INSTRUCTOR", name: "Instructor", emoji: "🎓",
+        desc: "Control game — admin view, never visible to players. WIN: Teach the mechanics through scenarios.",
+        canOwnAssets: true, canTrade: false, hasDemand: false,
+        hint: "You can pause the game, adjust roles, and select scenarios. Use this to guide discussion and diagnose understanding gaps.",
+        guide: "Instructors can freeze the game, reassign roles mid-game, and change scenarios. Ideal for teaching: pause after each phase to discuss the economic incentives players faced.",
+    },
 };
 
 // ─── GUN PEERS ───
 // Local relay server: run `npm run relay` (or `node gun-relay.cjs`) before
 // launching the app for multiplayer sessions.
 export const GUN_PEERS = [
-    "http://localhost:8765/gun"
+    "http://127.0.0.1:8765/gun"
 ];
 
 // ─── SCENARIOS ───

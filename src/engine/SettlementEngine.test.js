@@ -11,7 +11,7 @@ describe("SettlementEngine core arithmetic", () => {
   it("uses imbalance = actual − contracted (negative when short)", () => {
     const contracted = 10; // MW
     const actual = 8; // MW
-    const imbalance = computeImbalance(actual, contracted);
+    const imbalance = computeImbalance(actual, contracted, 0);
     expect(imbalance).toBe(actual - contracted);
     expect(imbalance).toBe(-2);
   });

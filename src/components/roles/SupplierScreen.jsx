@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import SharedLayout from './SharedLayout';
-import { SUPPLIERS } from '../../shared/constants';
+import { SUPPLIERS, SP_DURATION_H } from '../../shared/constants';
 import { Tip } from '../shared/Tip';
+import MarketOverviewPanel from '../shared/MarketOverviewPanel';
 
 const f0 = p => Number(p).toLocaleString(undefined, { maximumFractionDigits: 0 });
 const f1 = p => Number(p).toLocaleString(undefined, { maximumFractionDigits: 1 });
@@ -33,7 +34,8 @@ export default function SupplierScreen(props) {
         market, sp, msLeft, tickSpeed, phase, cash, assetKey,
         daMyBid, setDaMyBid, daSubmitted, onDaSubmit,
         idMyOrder, setIdMyOrder, idSubmitted, onIdSubmit,
-        spContracts, pid, contractPosition
+        spContracts, pid, contractPosition,
+        daOrderBook, daResult, idOrderBook, bmOrderBook, simRes, currentSp
     } = props;
 
     // Allow player to pick a supplier profile (defaults to BRITISH_GAS)
@@ -46,11 +48,21 @@ export default function SupplierScreen(props) {
     const hr = currentMkt?.hr ?? Math.floor((sp - 1) / 2);
 
     // --- DEMAND FORECAST with error ---
-    // Base demand follows a daily curve scaled to supplier portfolio size
+    // Prefer system-level demand (MW) when available; otherwise fall back
+    // to the previous daily-curve approach. We allocate system demand to each
+    // supplier proportional to its portfolio size.
     const baseDemandMw = useMemo(() => {
+        const sysDemand = market?.forecast?.system?.demandMw || null;
+        if (sysDemand !== null) {
+            // compute total portfolio across all suppliers
+            const totalPort = Object.values(SUPPLIERS).reduce((sum, s) => sum + (s.portfolioMw || 0), 0);
+            const share = totalPort > 0 ? (sup.portfolioMw / totalPort) : 0;
+            return Math.round(sysDemand * share);
+        }
+        // fallback: supplier-specific daily curve
         const peakFactor = 0.72 + 0.28 * (0.5 - 0.5 * Math.cos(((hr - 5) / 24) * 2 * Math.PI));
         return Math.round(sup.portfolioMw * peakFactor);
-    }, [hr, sup.portfolioMw]);
+    }, [hr, sup.portfolioMw, market?.forecast?.system?.demandMw]);
 
     // Actual demand = base + random error (seeded on SP for determinism)
     const actualDemandMw = useMemo(() => {
@@ -64,12 +76,22 @@ export default function SupplierScreen(props) {
     const hedgeRatio = baseDemandMw > 0 ? Math.min(100, (contractPosition / baseDemandMw) * 100) : 0;
     const shortfall = Math.max(0, actualDemandMw - contractPosition);
     const surplus = Math.max(0, contractPosition - actualDemandMw);
-    const imbalanceCost = shortfall > 0 ? shortfall * sbp * 0.5 : -(surplus * ssp * 0.5);
-    const retailRevenue = actualDemandMw * sup.retailTariff * 0.5;
-    const wholesaleCost = contractPosition * (daMyBid.price || sbp) * 0.5;
+    const imbalanceCost = shortfall > 0 ? shortfall * sbp * SP_DURATION_H : -(surplus * ssp * SP_DURATION_H);
+    const retailRevenue = actualDemandMw * sup.retailTariff * SP_DURATION_H;
+    const wholesaleCost = contractPosition * (daMyBid.price || sbp) * SP_DURATION_H;
     const estimatedMargin = retailRevenue - wholesaleCost - Math.abs(imbalanceCost);
 
+    // Position Balance Scale (Retail Demand vs Contracted Supply)
+    const retailDemandMw = baseDemandMw || 0;
+    const contractedMw = Math.abs(contractPosition || 0);
+    const exposureMw = retailDemandMw - contractedMw;
+    const isBalanced = exposureMw === 0;
+
     // --- TOP RIGHT ---
+    const systemMarket = market?.actual || market?.forecast || {};
+    const sysWind = systemMarket.system?.windMw || 0;
+    const sysSolar = systemMarket.system?.solarMw || 0;
+
     const topRight = (
         <div style={{ display: "flex", gap: 12 }}>
             <MetricCard
@@ -85,6 +107,20 @@ export default function SupplierScreen(props) {
                 unit="%"
                 color={hedgeRatio >= 95 ? "#1de98b" : hedgeRatio >= 70 ? "#f5b222" : "#f0455a"}
                 tooltip="How much of your Forecast Demand is currently covered by wholesale electricity contracts (DA + ID purchases)."
+            />
+            <MetricCard
+                label="SYS WIND"
+                value={f0(sysWind)}
+                unit="MW"
+                color="#a3e635"
+                tooltip="Total system wind generation currently expected. Helps you anticipate merit order shifts."
+            />
+            <MetricCard
+                label="SYS SOLAR"
+                value={f0(sysSolar)}
+                unit="MW"
+                color="#fbbf24"
+                tooltip="Total system solar generation currently expected. Useful for judging near term price direction."
             />
         </div>
     );
@@ -116,10 +152,11 @@ export default function SupplierScreen(props) {
 
     // --- SECTION 2: DEMAND FORECASTING & LIVE STATUS ---
     const sect2Demand = (
-        <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 8, padding: 16, display: "flex", flexDirection: "column" }}>
-            <div style={{ fontSize: 10, color: "#4d7a96", fontWeight: 800, textTransform: "uppercase", marginBottom: 12 }}>2. Customer Demand & Hedging</div>
+        <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 8, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 10, color: "#4d7a96", fontWeight: 800, textTransform: "uppercase" }}>2. Customer Demand & Hedging</div>
 
-            <div style={{ marginBottom: 16, background: "#050e16", padding: "8px 12px", border: `1px solid #1a3045`, borderRadius: 6 }}>
+            {/* Existing demand / hedge insight */}
+            <div style={{ marginBottom: 4, background: "#050e16", padding: "8px 12px", border: `1px solid #1a3045`, borderRadius: 6 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1px 1fr", gap: 12 }}>
                     <div>
                         <div style={{ fontSize: 8, color: "#4d7a96", marginBottom: 2 }}>FORECAST DEMAND</div>
@@ -137,9 +174,64 @@ export default function SupplierScreen(props) {
                 </div>
             </div>
 
-            {/* Hedge Ratio Bar */}
+            {/* New visual Position Balance Scale */}
+            <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 8, padding: 12 }}>
+                <div style={{ fontSize: 9, color: "#4d7a96", textTransform: "uppercase", marginBottom: 12, letterSpacing: 1 }}>
+                    Position Balance Scale
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                    {/* Retail Demand Bar */}
+                    <div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#2a5570", marginBottom: 4 }}>
+                            <span>RETAIL DEMAND</span>
+                            <span style={{ fontFamily: "'JetBrains Mono'", color: "#ddeeff" }}>{f0(retailDemandMw)} MW</span>
+                        </div>
+                        <div style={{ height: 12, background: "#1a3045", borderRadius: 4, overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: "100%", background: "#4d7a96" }} />
+                        </div>
+                    </div>
+
+                    {/* Contracted Supply Bar */}
+                    <div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#2a5570", marginBottom: 4 }}>
+                            <span>CONTRACTED SUPPLY (DA + ID)</span>
+                            <span style={{ fontFamily: "'JetBrains Mono'", color: "#ddeeff" }}>{f0(contractedMw)} MW</span>
+                        </div>
+                        <div style={{ height: 12, background: "#1a3045", borderRadius: 4, overflow: "hidden" }}>
+                            <div style={{
+                                height: "100%",
+                                width: `${retailDemandMw > 0 ? Math.min(100, (contractedMw / retailDemandMw) * 100) : 0}%`,
+                                background: contractedMw >= retailDemandMw ? "#1de98b" : "#f5b222",
+                                transition: "width 0.3s ease-in-out"
+                            }} />
+                        </div>
+                    </div>
+                </div>
+
+                {/* Exposure Warning Banner */}
+                <div style={{
+                    background: isBalanced ? "#071f13" : "#1f0709",
+                    border: `1px solid ${isBalanced ? "#1de98b44" : "#f0455a44"}`,
+                    borderRadius: 6, padding: "8px 12px", textAlign: "center"
+                }}>
+                    <div style={{ fontSize: 8, color: isBalanced ? "#1de98b" : "#f0455a", marginBottom: 2 }}>
+                        {isBalanced ? "✓ PERFECTLY HEDGED" : "⚠ IMBALANCE EXPOSURE"}
+                    </div>
+                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 16, fontWeight: 900, color: isBalanced ? "#1de98b" : "#f0455a" }}>
+                        {isBalanced ? "0 MW" : `${exposureMw > 0 ? "SHORT" : "LONG"} ${f0(Math.abs(exposureMw))} MW`}
+                    </div>
+                    {!isBalanced && (
+                        <div style={{ fontSize: 8, color: "#f0455a88", marginTop: 4 }}>
+                            You will be forced to {exposureMw > 0 ? "buy shortfall at SBP" : "sell excess at SSP"}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Hedge ratio + exposure metrics */}
             <Tip text="Strive for 100% hedge to minimize imbalance risk. Being under-hedged forces you to buy missing power at real-time System Buy Prices (often very high).">
-                <div style={{ marginBottom: 12 }}>
+                <div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#4d7a96", marginBottom: 4, cursor: "help" }}>
                         <span style={{ borderBottom: "1px dashed #4d7a96" }}>HEDGE RATIO</span>
                         <span style={{ color: hedgeRatio >= 95 ? "#1de98b" : hedgeRatio >= 70 ? "#f5b222" : "#f0455a", fontWeight: 800 }}>{f1(hedgeRatio)}%</span>
@@ -196,7 +288,7 @@ export default function SupplierScreen(props) {
                     {daMyBid.mw && daMyBid.mw < baseDemandMw * 0.9 && (
                         <div style={{ fontSize: 8.5, color: "#f0455a", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Under-hedging! You're only buying {f1((daMyBid.mw / baseDemandMw) * 100)}% of your forecast demand.</div>
                     )}
-                    <button onClick={() => { setDaMyBid(b => ({ ...b, side: "buy" })); onDaSubmit(); }} disabled={daSubmitted || !isDa || !daMyBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: daSubmitted || !isDa ? "#1a3045" : "#f5b222", border: "none", borderRadius: 6, color: daSubmitted || !isDa ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: daSubmitted || !isDa ? "default" : "pointer" }}>
+                    <button data-testid="sup-submit-da" onClick={() => { setDaMyBid(b => ({ ...b, side: "buy" })); onDaSubmit(); }} disabled={daSubmitted || !isDa || !daMyBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: daSubmitted || !isDa ? "#1a3045" : "#f5b222", border: "none", borderRadius: 6, color: daSubmitted || !isDa ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: daSubmitted || !isDa ? "default" : "pointer" }}>
                         {!isDa ? "AWAITING DA PHASE..." : daSubmitted ? "✓ PURCHASE LOCKED" : "SUBMIT DA PURCHASE →"}
                     </button>
                 </>
@@ -219,7 +311,7 @@ export default function SupplierScreen(props) {
                             <input type="number" value={idMyOrder.price} disabled={idSubmitted || !isId} onChange={e => setIdMyOrder(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#38c0fc", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
                         </div>
                     </div>
-                    <button onClick={onIdSubmit} disabled={idSubmitted || !isId || !idMyOrder.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: idSubmitted || !isId ? "#1a3045" : "#38c0fc", border: "none", borderRadius: 6, color: idSubmitted || !isId ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: idSubmitted || !isId ? "default" : "pointer" }}>
+                    <button data-testid="sup-submit-id" onClick={onIdSubmit} disabled={idSubmitted || !isId || !idMyOrder.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: idSubmitted || !isId ? "#1a3045" : "#38c0fc", border: "none", borderRadius: 6, color: idSubmitted || !isId ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: idSubmitted || !isId ? "default" : "pointer" }}>
                         {!isId ? "AWAITING ID PHASE..." : idSubmitted ? "✓ ORDER PUBLISHED" : "SUBMIT ID ORDER →"}
                     </button>
                 </>
@@ -232,6 +324,28 @@ export default function SupplierScreen(props) {
                     <div style={{ fontSize: 9, color: "#2a5570" }}>Any unhedged demand will be settled at SBP/SSP.</div>
                 </div>
             )}
+        </div>
+    );
+
+    // --- MARKET OVERVIEW ---
+    const sectMarket = (
+        <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 8, padding: 16, display: "flex", flexDirection: "column", minHeight: 250 }}>
+            <div style={{ fontSize: 10, color: "#4d7a96", fontWeight: 800, textTransform: "uppercase", marginBottom: 12 }}>Market Overview ({phase})</div>
+            <div style={{ flex: 1, position: "relative" }}>
+                <MarketOverviewPanel
+                    phase={phase}
+                    daOrderBook={daOrderBook}
+                    daResult={daResult}
+                    idOrderBook={idOrderBook}
+                    spContracts={spContracts}
+                    currentSp={currentSp}
+                    msLeft={msLeft}
+                    tickSpeed={tickSpeed}
+                    bmOrderBook={bmOrderBook}
+                    market={market}
+                    simRes={simRes}
+                />
+            </div>
         </div>
     );
 
@@ -293,6 +407,7 @@ export default function SupplierScreen(props) {
                 {sect1Profile}
                 {sect2Demand}
             </div>
+            {sectMarket}
             <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
                 {sect3Procurement}
             </div>

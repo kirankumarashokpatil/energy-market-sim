@@ -10,26 +10,52 @@ export function Tip({ children, text, width = 200 }) {
         if (show && tipRef.current && containerRef.current) {
             const tipRect = tipRef.current.getBoundingClientRect();
             const containerRect = containerRef.current.getBoundingClientRect();
+            const TIP_MARGIN = 6;
+            const SCREEN_MARGIN = 10;
 
-            let newStyle = {
-                bottom: "calc(100% + 6px)",
+            // FIX: Check if there's enough space above; if not, render below
+            const spaceAbove = containerRect.top;
+            const spaceBelow = window.innerHeight - containerRect.bottom;
+            const tooltipHeight = tipRect.height;
+
+            let newStyle;
+            const centerStyle = {
                 left: "50%",
                 transform: "translateX(-50%)",
             };
 
-            // Check right edge
-            if (containerRect.left + (tipRect.width / 2) > window.innerWidth - 10) {
+            // Prefer above if enough space, otherwise render below
+            if (spaceAbove > tooltipHeight + TIP_MARGIN) {
                 newStyle = {
                     bottom: "calc(100% + 6px)",
+                    ...centerStyle,
+                };
+            } else if (spaceBelow > tooltipHeight + TIP_MARGIN) {
+                newStyle = {
+                    top: "calc(100% + 6px)",
+                    ...centerStyle,
+                };
+            } else {
+                // Fallback to above (original behavior)
+                newStyle = {
+                    bottom: "calc(100% + 6px)",
+                    ...centerStyle,
+                };
+            }
+
+            // Check right edge collision
+            if (containerRect.left + (tipRect.width / 2) > window.innerWidth - SCREEN_MARGIN) {
+                newStyle = {
+                    ...newStyle,
                     left: "auto",
                     right: 0,
                     transform: "none",
                 };
             }
-            // Check left edge
-            else if (containerRect.left - (tipRect.width / 2) < 10) {
+            // Check left edge collision
+            else if (containerRect.left - (tipRect.width / 2) < SCREEN_MARGIN) {
                 newStyle = {
-                    bottom: "calc(100% + 6px)",
+                    ...newStyle,
                     left: 0,
                     right: "auto",
                     transform: "none",
@@ -46,7 +72,16 @@ export function Tip({ children, text, width = 200 }) {
             style={{ position: "relative", display: "inline-block", cursor: "help" }}
             onMouseEnter={() => setShow(true)}
             onMouseLeave={() => setShow(false)}
-            onTouchStart={() => setShow(!show)}
+            onTouchStart={(e) => {
+                // Prevent default to avoid event conflicts on mobile
+                e.preventDefault();
+                e.stopPropagation();
+                setShow(!show);
+            }}
+            onTouchEnd={() => {
+                // Don't auto-hide on touch end; let user tap again to dismiss
+                // This prevents the tooltip from flickering and blocking button clicks
+            }}
             role="tooltip"
             aria-label={text}
         >

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import SharedLayout from './SharedLayout';
 import ForecastPanel from './ForecastPanel';
-import SupplyDemandCurve from '../shared/SupplyDemandCurve';
-import { EVENTS, SYSTEM_PARAMS } from '../../shared/constants';
+import MarketOverviewPanel from '../shared/MarketOverviewPanel';
+import { EVENTS, SYSTEM_PARAMS, FREQ_FAIL_LO, FREQ_FAIL_HI } from '../../shared/constants';
 import { ComposableMap, Geographies, Geography, Marker, Line } from 'react-simple-maps';
 
 const f0 = p => Number(p).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -50,12 +50,12 @@ const geoUrl = "https://raw.githubusercontent.com/ONSvisual/topojson_boundaries/
 
 function UKMap({ nodes, flows }) {
     return (
-        <ComposableMap 
-            projection="geoMercator" 
-            projectionConfig={{ 
-                scale: SYSTEM_PARAMS.mapProjection.scale, 
-                center: [SYSTEM_PARAMS.mapProjection.centerLon, SYSTEM_PARAMS.mapProjection.centerLat] 
-            }} 
+        <ComposableMap
+            projection="geoMercator"
+            projectionConfig={{
+                scale: SYSTEM_PARAMS.mapProjection.scale,
+                center: [SYSTEM_PARAMS.mapProjection.centerLon, SYSTEM_PARAMS.mapProjection.centerLat]
+            }}
             style={{ width: "100%", height: "100%", overflow: "visible" }}>
             <Geographies geography={geoUrl}>
                 {({ geographies }) => geographies.map(geo => (
@@ -175,7 +175,7 @@ export default function NESOScreen(props) {
         market, sp, msLeft, tickSpeed, phase,
         leaderboard = [], spHistory = [], allBids = [], players = [],
         onNextPhase, onExecuteEvent, onPauseToggle, paused, freqBreachSec,
-        onSetManualNiv, lastRes
+        onSetManualNiv, lastRes, daOrderBook, daResult, idOrderBook, spContracts, currentSp, simRes
     } = props;
 
     const [selectedEvent, setSelectedEvent] = useState(null);
@@ -183,10 +183,30 @@ export default function NESOScreen(props) {
     const [manualNiv, setManualNiv] = useState(0);
     const [manualDispatch, setManualDispatch] = useState(false);
     const [selectedBids, setSelectedBids] = useState(new Set());
+    const [demandSurge, setDemandSurge] = useState(0); // -0.1 to +0.1 (±10% demand injection)
 
     // ── Derive ALL data from real game state ─────────────────────────────────
     const currentMkt = phase === "DA" ? market?.forecast : market?.actual;
     const { freq = 50, niv = 0, isShort = false, sbp = 0, ssp = 0, wf = 0.5, event = null } = currentMkt || {};
+
+    // Grid stress level banner based on live NIV
+    const nivAbs = Math.abs(niv || 0);
+    let stressLevel = "SYSTEM NORMAL";
+    let stressColor = "#1de98b";
+    let stressBg = "#071f13";
+    let stressEmoji = "✅";
+
+    if (nivAbs > 600) {
+        stressLevel = "SEVERE IMBALANCE";
+        stressColor = "#f0455a";
+        stressBg = "#1f0709";
+        stressEmoji = "🚨";
+    } else if (nivAbs > 300) {
+        stressLevel = "SYSTEM STRESSED";
+        stressColor = "#f5b222";
+        stressBg = "#1f1505";
+        stressEmoji = "⚠️";
+    }
 
     // Total demand/generation from real market state
     const totalDemandGW = (SYSTEM_PARAMS.baseDemandGW + Math.abs(niv) / 1000); // base from SYSTEM_PARAMS + NIV influence
@@ -227,7 +247,7 @@ export default function NESOScreen(props) {
     // Add system status based on real state
     if (isShort) notices.push({ icon: "⬇", color: "#f97316", text: `System SHORT by ${f0(Math.abs(niv))} MW` });
     else notices.push({ icon: "✓", color: "#22c55e", text: `System LONG by ${f0(Math.abs(niv))} MW` });
-    if (freq < SYSTEM_PARAMS.freqBandLow || freq > SYSTEM_PARAMS.freqBandHigh) notices.push({ icon: "⚠", color: "#ef4444", text: `Frequency deviation: ${freq.toFixed(2)} Hz` });
+    if (freq < FREQ_FAIL_LO || freq > FREQ_FAIL_HI) notices.push({ icon: "⚠", color: "#ef4444", text: `Frequency deviation: ${freq.toFixed(2)} Hz` });
 
     // ── Merit order from REAL bids ────────────────────────────────────────────
     const botBids = market?.actual?.bots || [];
@@ -282,7 +302,7 @@ export default function NESOScreen(props) {
         { from: [0.22, 53.33], to: [4.0, 54.5], label: `Viking ${vkFlow}`, labelPos: [2.8, 53.8], textAnchor: "middle" },
     ];
 
-    const freqOk = freq >= SYSTEM_PARAMS.freqBandLow && freq <= SYSTEM_PARAMS.freqBandHigh;
+    const freqOk = freq >= FREQ_FAIL_LO && freq <= FREQ_FAIL_HI;
     const freqColor = freqOk ? "#22d3ee" : freq >= 49.5 && freq <= 50.5 ? "#fbbf24" : "#ef4444";
 
     // Style shortcuts
@@ -346,6 +366,32 @@ export default function NESOScreen(props) {
                 gun={props.gun}
                 room={props.room}
             />
+
+            {/* Demand Surge Tweaking Slider */}
+            <div style={{ ...s.panel, flexShrink: 0, marginTop: 12 }}>
+                <div style={s.sectionTitle}>Demand Surge Injection</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 10, color: "#4d7a96", flex: 1 }}>
+                        {demandSurge > 0 ? "↑" : demandSurge < 0 ? "↓" : "→"} Tweak Published Forecast
+                    </span>
+                    <span style={{ fontSize: 12, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: demandSurge > 0 ? "#f5b222" : demandSurge < 0 ? "#38c0fc" : "#4d7a96", minWidth: 50 }}>
+                        {demandSurge > 0 ? "+" : ""}{(demandSurge * 100).toFixed(0)}%
+                    </span>
+                </div>
+                <input
+                    type="range"
+                    min="-10"
+                    max="10"
+                    step="1"
+                    value={Math.round(demandSurge * 100)}
+                    onChange={(e) => setDemandSurge(parseInt(e.target.value) / 100)}
+                    style={{ width: "100%", cursor: "pointer" }}
+                />
+                <div style={{ fontSize: 8, color: "#2a5570", marginTop: 6, textAlign: "center" }}>
+                    −10% to +10% demand variance → impacts future prices
+                </div>
+            </div>
+
             <div style={{ ...s.panel, flexShrink: 0 }}>
                 <div style={s.sectionTitle}>System Notices</div>
                 {notices.map((n, i) => (
@@ -361,8 +407,40 @@ export default function NESOScreen(props) {
     // ═══════════════════════════════════════════════════════════════════════════
     // CENTER — Map + Grid Overview + Merit Order + Ancillary
     // ═══════════════════════════════════════════════════════════════════════════
+    const executeManualDispatch = useCallback(() => {
+        // Placeholder implementation to avoid runtime errors when triggering manual dispatch.
+        // In a future iteration this can call into a server-side dispatch engine.
+        if (!manualDispatch || selectedBids.size === 0) {
+            console.warn("[NESOScreen] Manual dispatch triggered with no selected bids.");
+            return;
+        }
+        const indices = Array.from(selectedBids.values());
+        const bids = indices.map(i => activeBids[i]).filter(Boolean);
+        console.warn("[NESOScreen] Manual dispatch requested for bids:", bids);
+    }, [manualDispatch, selectedBids, activeBids]);
+
     const center = (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {/* Grid stress banner */}
+            <div style={{
+                background: stressBg, border: `1px solid ${stressColor}66`, borderRadius: 8, padding: "12px 16px",
+                display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4
+            }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span className={nivAbs > 600 ? "blink" : ""} style={{ fontSize: 24 }}>{stressEmoji}</span>
+                    <div>
+                        <div style={{ fontSize: 9, color: "#4d7a96", letterSpacing: 1, marginBottom: 2 }}>GRID STATUS</div>
+                        <div style={{ fontSize: 16, fontWeight: 900, color: stressColor, letterSpacing: 1 }}>{stressLevel}</div>
+                    </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 9, color: "#4d7a96", letterSpacing: 1, marginBottom: 2 }}>NET IMBALANCE VOLUME</div>
+                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 20, fontWeight: 900, color: stressColor }}>
+                        {f0(nivAbs)} MW
+                    </div>
+                </div>
+            </div>
+
             {/* Event Badge */}
             {event && (
                 <div style={{ background: "#1f0709", border: `1px solid ${event.col}`, borderRadius: 8, padding: 12, display: "flex", alignItems: "center", gap: 12 }}>
@@ -416,7 +494,7 @@ export default function NESOScreen(props) {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
                     {[
                         { title: "Dynamic Containment", value: `${Math.max(0, SYSTEM_PARAMS.dcCapacityMW - Math.abs(Math.round(niv * 0.8)))} / ${SYSTEM_PARAMS.dcCapacityMW}`, unit: "MW", color: "#22d3ee" },
-                        { title: "Freq. Response", value: freq >= SYSTEM_PARAMS.freqBandLow && freq <= SYSTEM_PARAMS.freqBandHigh ? `+${SYSTEM_PARAMS.freqResponseCapacityMW}` : `${Math.round((50 - freq) * 200)}`, unit: "MW", color: "#38bdf8" },
+                        { title: "Freq. Response", value: freq >= FREQ_FAIL_LO && freq <= FREQ_FAIL_HI ? `+${SYSTEM_PARAMS.freqResponseCapacityMW}` : `${Math.round((50 - freq) * 200)}`, unit: "MW", color: "#38bdf8" },
                         { title: "Reserve Available", value: (totalCapacity / 1000).toFixed(1), unit: "GW", color: "#fbbf24" },
                         { title: "System Status", value: freqOk ? "Secure" : "Alert", unit: "", color: freqOk ? "#22c55e" : "#f97316" },
                     ].map((a) => (
@@ -429,8 +507,20 @@ export default function NESOScreen(props) {
                 </div>
             </div>
 
-            {/* Supply & Demand Curve */}
-            <SupplyDemandCurve allBids={allBids} market={currentMkt} simRes={lastRes} />
+            {/* Market Overview (DA/ID/BM) */}
+            <MarketOverviewPanel
+                phase={phase}
+                daOrderBook={daOrderBook}
+                daResult={daResult}
+                idOrderBook={idOrderBook}
+                spContracts={spContracts}
+                currentSp={currentSp}
+                msLeft={msLeft}
+                tickSpeed={tickSpeed}
+                bmOrderBook={allBids}
+                market={currentMkt}
+                simRes={lastRes || simRes}
+            />
 
             {/* Live Merit Order */}
             <div style={{ ...s.panel, flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>

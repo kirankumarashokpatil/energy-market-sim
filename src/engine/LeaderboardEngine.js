@@ -36,12 +36,26 @@ export function buildLeaderboard(players) {
     const systemSteward = players.reduce((a, b) => (b.systemScore || 0) > (a.systemScore || 0) ? b : a, players[0]);
 
     // Most consistent: lowest variance in overallScore history (if available)
-    // For now, use the player closest to their mean overallScore (least extreme)
-    const mostConsistent = players.reduce((a, b) => {
-        const aVar = Math.abs((a.overallScore || 50) - 50);
-        const bVar = Math.abs((b.overallScore || 50) - 50);
-        return aVar < bVar ? a : b;
-    }, players[0]);
+    // If no history, use the player with overallScore closest to the group average
+    let mostConsistent;
+    if (players[0] && players[0].scoreHistory && players[0].scoreHistory.length > 1) {
+        // Calculate variance for each player
+        const withVariance = players.map(p => {
+            const scores = p.scoreHistory;
+            const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+            const variance = scores.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / scores.length;
+            return { ...p, variance };
+        });
+        mostConsistent = withVariance.reduce((a, b) => a.variance < b.variance ? a : b);
+    } else {
+        // Fallback: player with overallScore closest to group average
+        const avgScore = players.reduce((sum, p) => sum + (p.overallScore || 0), 0) / players.length;
+        mostConsistent = players.reduce((a, b) => {
+            const aDiff = Math.abs((a.overallScore || 0) - avgScore);
+            const bDiff = Math.abs((b.overallScore || 0) - avgScore);
+            return aDiff < bDiff ? a : b;
+        });
+    }
 
     return { overall, roleWinners, systemSteward, mostConsistent };
 }

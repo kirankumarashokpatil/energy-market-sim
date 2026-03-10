@@ -4,6 +4,7 @@ import {
   computeImbalanceSettlement,
   computeHubFeeFromSettlements,
 } from "./SettlementEngine.js";
+import { SP_DURATION_H } from "../shared/constants.js";
 
 // Higher-level scenario-style checks that tie together market, prices,
 // and settlement for teaching scenarios (spike, disconnect, etc.)
@@ -37,7 +38,7 @@ describe("Scenario flows (spike, disconnect, imbalance)", () => {
 
     expect(imbalanceMw).toBeLessThan(0); // short
     expect(price).toBe(sbp); // SBP applies when short
-    expect(mwh).toBeCloseTo(imbalanceMw * 0.5, 6);
+    expect(mwh).toBeCloseTo(imbalanceMw * SP_DURATION_H, 6);
     expect(cash).toBeLessThan(0); // pays money
     // With SPIKE scenario multipliers, this should be materially large
     expect(Math.abs(cash)).toBeGreaterThan(50);
@@ -63,7 +64,7 @@ describe("Scenario flows (spike, disconnect, imbalance)", () => {
 
     expect(imbalanceMw).toBe(-20); // short 20 MW
     expect(price).toBe(sbp);
-    expect(mwh).toBeCloseTo(-20 * 0.5, 6);
+    expect(mwh).toBeCloseTo(-20 * SP_DURATION_H, 6);
     expect(cash).toBeCloseTo(mwh * price, 6);
   });
 

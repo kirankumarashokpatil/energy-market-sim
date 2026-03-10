@@ -1,4 +1,4 @@
-import { ASSETS, EVENTS, BOT_ROSTER, SCENARIOS, MIN_SOC, MAX_SOC, SP_DURATION_H } from '../shared/constants.js';
+import { ASSETS, EVENTS, BOT_ROSTER, SCENARIOS, MIN_SOC, MAX_SOC, SP_DURATION_H, SYSTEM_PARAMS } from '../shared/constants.js';
 import { clamp, spTime } from '../shared/utils.js';
 
 // ─── Deterministic RNG ───
@@ -11,6 +11,56 @@ function rng(seed) {
     };
 }
 
+// ─── Renewable physics helpers ───
+
+// Wind speed model (m/s) for a given SP. Produces realistic day‑night
+// variation and random fluctuations using deterministic RNG.
+function windSpeedForSp(sp) {
+    const base = 6 + 3 * Math.sin(((sp - 1) / 48) * Math.PI * 2); // 3–9 m/s daily cycle
+    const wRng = rng(sp * 4211 + 17);
+    const noise = (wRng() - 0.5) * 2; // ±1 m/s
+    return Math.max(0, base + noise);
+}
+
+// Add forecast error to wind speed (10‑20% day‑ahead, ~5% intraday)
+function forecastWindSpeed(trueSpeed, sp) {
+    const errScale = 0.12 + 0.08 * rng(sp * 3127 + 9)(); // 0.12‑0.20
+    const sign = rng(sp * 531 + 3)() < 0.5 ? -1 : 1;
+    return Math.max(0, trueSpeed * (1 + sign * errScale));
+}
+
+// Convert wind speed (m/s) into capacity fraction using a typical turbine
+// power curve with cut-in 3 m/s, rated 12 m/s, cut-out 25 m/s.
+function windFractionFromSpeed(v) {
+    if (v < 3 || v >= 25) return 0;
+    if (v < 12) {
+        // cubic ramp between 3 and 12
+        const x = (v - 3) / (12 - 3);
+        return Math.pow(x, 3);
+    }
+    if (v <= 15) return 1;
+    // above rated until cut-out simple linear drop
+    return 1 - (v - 15) / (25 - 15);
+}
+
+// Solar irradiance fraction (0‑1) for a given SP. Sinusoidal daylight pattern
+// with random cloud noise.
+function solarIrradianceForSp(sp) {
+    const hr = ((sp - 1) / 2) % 24;
+    if (hr < 6 || hr > 18) return 0;
+    const base = Math.sin(((hr - 6) / 12) * Math.PI);
+    const sRng = rng(sp * 715 + 23);
+    const noise = (sRng() - 0.5) * 0.3; // ±15% cloud effect
+    return clamp(base + noise, 0, 1);
+}
+
+// Forecast error for solar (smaller than wind)
+function forecastSolarIrradiance(trueIrr, sp) {
+    const errScale = 0.07 + 0.03 * rng(sp * 811 + 5)(); // 7‑10%
+    const sign = rng(sp * 929 + 2)() < 0.5 ? -1 : 1;
+    return clamp(trueIrr * (1 + sign * errScale), 0, 1);
+}
+
 // ─── Market State for an SP (Forecast vs Actual) ───
 export function marketForSp(sp, scenarioId = "NORMAL", injectedEvents = [], publishedForecast = null, manualNivOverride = null) {
     const sc = SCENARIOS[scenarioId] || SCENARIOS.NORMAL;
@@ -20,18 +70,41 @@ export function marketForSp(sp, scenarioId = "NORMAL", injectedEvents = [], publ
     // 1. BASE EXPECTED STATE (Day-Ahead Forecast)
     const hr = Math.floor((sp - 1) / 2);
 
-    let expectedDemand, expectedWind, expectedSolar;
+    // demand remains synthetic for now (could later drive by weather)
+    let expectedDemand = 0.72 + 0.28 * (0.5 - 0.5 * Math.cos(((hr - 5) / 24) * 2 * Math.PI));
+
+    // Forecast and true renewable resource states
+    const trueWindSpeed = windSpeedForSp(sp);
+    const forecastWindSpd = forecastWindSpeed(trueWindSpeed, sp);
+    let expectedWind = windFractionFromSpeed(forecastWindSpd) * sc.windMod;
+
+    const trueIrr = solarIrradianceForSp(sp);
+    const forecastIrr = forecastSolarIrradiance(trueIrr, sp);
+    let expectedSolar = forecastIrr;
+
+    // override with publishedForecast if provided (DA override)
     if (publishedForecast && publishedForecast.demand && publishedForecast.wind) {
         const idx = (sp - 1) % 48;
-        // Normalize the forecast engine's real-world MW (e.g. 35000 MW) into the game's 0-1 scale
         expectedDemand = clamp(publishedForecast.demand[idx] / 45000, 0.4, 1.2);
         expectedWind = clamp(publishedForecast.wind[idx] / 25000, 0, 1) * sc.windMod;
         expectedSolar = publishedForecast.solar ? clamp(publishedForecast.solar[idx] / 15000, 0, 1) : 0;
-    } else {
-        expectedDemand = 0.72 + 0.28 * (0.5 - 0.5 * Math.cos(((hr - 5) / 24) * 2 * Math.PI));
-        expectedWind = (0.35 + 0.65 * r()) * sc.windMod;
-        expectedSolar = hr >= 6 && hr <= 18 ? clamp(Math.sin(((hr - 6) / 12) * Math.PI), 0, 1) * (0.8 + 0.4 * r()) : 0;
     }
+
+    // --- SYSTEM ASSETS (absolute MW values) ---
+    const baseDemandMw = SYSTEM_PARAMS.baseDemandGW * 1000;
+    const windCapMw = SYSTEM_PARAMS.maxWindGW * 1000;
+    const solarAssets = Object.values(ASSETS).filter(a => a.kind === "solar");
+    const solarCapMw = solarAssets.reduce((sum, a) => sum + (a.maxMW || 0), 0);
+
+    const forecastSystem = {
+        demandMw: Math.round(expectedDemand * baseDemandMw),
+        windMw: Math.round(expectedWind * windCapMw),
+        solarMw: Math.round(expectedSolar * solarCapMw),
+        // also expose raw capacity so UI can scale sparklines or panels
+        windCapMw,
+        solarCapMw,
+        baseDemandMw
+    };
 
     const baseNIV = (r() - 0.52) * 650 * expectedDemand + sc.nivBias;
     const expectedRefPrice = (65 + r() * 55) * sc.priceMod;
@@ -42,6 +115,8 @@ export function marketForSp(sp, scenarioId = "NORMAL", injectedEvents = [], publ
     const expectedPriceNL = (expectedRefPrice * 0.95) + (r() * 20 - 10); // Netherlands: strongly gas-coupled to GB but slightly discounted
     const expectedPriceDK = (30 + (1 - expectedWind) * 60 + (r() * 10)) * sc.priceMod; // Denmark: Highly inversely correlated to GB wind
 
+    // debug: log expected wind/solar to diagnose NaN issues
+    if (import.meta.env.DEV) console.log('DEBUG forecast', { sp, expectedWind, expectedSolar });
     const forecast = {
         sp,
         hr,
@@ -55,7 +130,8 @@ export function marketForSp(sp, scenarioId = "NORMAL", injectedEvents = [], publ
         priceFR: expectedPriceFR,
         priceNO: expectedPriceNO,
         priceNL: expectedPriceNL,
-        priceDK: expectedPriceDK
+        priceDK: expectedPriceDK,
+        system: forecastSystem
     };
 
     // 2. ACTUAL STATE (Reality hits during ID and BM)
@@ -75,17 +151,19 @@ export function marketForSp(sp, scenarioId = "NORMAL", injectedEvents = [], publ
     }
 
     // Forecast error applied (e.g. wind dropping or demand surging unexpectedly)
-    const windError = (errRng() - 0.4) * 0.3; // -12% to +18% swing
+    const windError = (errRng() - 0.4) * 0.3; // noise for Danish price coupling (not applied to wind output)
     const demandErrorMv = (errRng() - 0.5) * 120;
     const solarError = (errRng() - 0.3) * 0.2; // -6% to +14% swing
 
-    // True physical conditions
-    const trueWind = event?.id === "WIND_UP" ? clamp(expectedWind * 1.6, 0, 1)
-        : event?.id === "WIND_LOW" ? clamp(expectedWind * 0.3, 0, 1)
-            : event?.id === "DUNKEL" ? clamp(expectedWind * 0.05, 0, 1)
-                : clamp(expectedWind + windError, 0, 1);
+    // True physical conditions derived from wind speed and irradiance
+    let modWindSpeed = trueWindSpeed;
+    if (event?.id === "WIND_UP") modWindSpeed *= 1.6;
+    if (event?.id === "WIND_LOW") modWindSpeed *= 0.3;
+    if (event?.id === "DUNKEL") modWindSpeed *= 0.05;
+    const trueWind = windFractionFromSpeed(modWindSpeed);
 
-    const trueSolar = clamp(expectedSolar + solarError, 0, 1);
+    // solar error still adds some noise on top of irradiance
+    const trueSolar = clamp(trueIrr + solarError, 0, 1);
 
     const trueNIV = manualNivOverride !== null ? clamp(manualNivOverride, -620, 620) : clamp(baseNIV + demandErrorMv + (event ? event.niv : 0), -620, 620);
     const trueIsShort = trueNIV < 0;
@@ -115,7 +193,15 @@ export function marketForSp(sp, scenarioId = "NORMAL", injectedEvents = [], publ
         priceFR: truePriceFR,
         priceNO: truePriceNO,
         priceNL: truePriceNL,
-        priceDK: truePriceDK
+        priceDK: truePriceDK,
+        system: {
+            demandMw: Math.round((expectedDemand + demandErrorMv / baseDemandMw) * baseDemandMw),
+            windMw: Math.round(trueWind * windCapMw),
+            solarMw: Math.round(trueSolar * solarCapMw),
+            windCapMw,
+            solarCapMw,
+            baseDemandMw
+        }
     };
 
     // Bots (Generate generic BM bots based on ACTUAL state)
@@ -129,6 +215,47 @@ export function marketForSp(sp, scenarioId = "NORMAL", injectedEvents = [], publ
         actual.sbp = Math.min(SYSTEM_PARAMS.VoLL, actual.sbp * lolpMultiplier);
         actual.ssp = Math.max(0, actual.ssp / lolpMultiplier);
     }
+
+
+    // --- Automatic interconnector flow simulation ---
+
+    // --- Demand curve / supply curve derivation ---
+    // Provide a simple stepwise curve for UI plotting or for more advanced
+    // market-clearing algorithms.  Uses deterministic RNG so the shape is
+    // repeatable for the same SP.
+    function makeCurve(baseMw, rngFn) {
+        const steps = [];
+        const points = 6; // number of vertices (small for performance)
+        for (let i = 0; i <= points; i++) {
+            const vol = Math.round((i / points) * baseMw);
+            // price from 10 to 200 with some randomness
+            const price = Math.round(10 + (190 * (i / points)) + (rngFn() * 20 - 10));
+            steps.push({ mw: vol, price });
+        }
+        return steps;
+    }
+
+    forecast.demandCurve = makeCurve(forecastSystem.demandMw, r);
+    actual.demandCurve = makeCurve(actual.system.demandMw, errRng);
+    function calcFlow(marketObj, def) {
+        const fpk = def.foreignPriceKey || "priceFR";
+        const uk = marketObj.baseRef || marketObj.sbp || 0;
+        const fr = marketObj[fpk] || uk;
+        // simple proportional coupling: 15 MW per £ spread (arbitrary scale)
+        let flow = (uk - fr) * 15;
+        const cap = def.maxMW || 1000;
+        if (flow > cap) flow = cap;
+        if (flow < -cap) flow = -cap;
+        return Math.round(flow);
+    }
+
+    const icDefs = Object.values(ASSETS).filter(a => a.kind === "interconnector");
+    forecast.interconnectorFlows = {};
+    actual.interconnectorFlows = {};
+    icDefs.forEach(def => {
+        forecast.interconnectorFlows[def.key] = calcFlow(forecast, def);
+        actual.interconnectorFlows[def.key] = calcFlow(actual, def);
+    });
 
     return { forecast, actual };
 }
@@ -176,38 +303,48 @@ export function clearBM(bids, market) {
     const side = isShort ? "offer" : "bid";
     const cands = bids.filter(b => b.side === side && +b.mw > 0 && !isNaN(+b.price))
         .sort((a, b) => isShort ? +a.price - +b.price : +b.price - +a.price);
-    let rem = Math.abs(niv), cp = isShort ? sbp : ssp;
+
+    let rem = Math.abs(niv);
+    let cp = isShort ? sbp : ssp;
     const acc = [];
+
     for (const b of cands) {
-        if (rem <= 0) break;
+        // Precision-safe break
+        if (rem <= 0.001) break;
         const mwAcc = Math.min(+b.mw, rem);
         cp = +b.price;
         acc.push({ ...b, mwAcc });
         rem -= mwAcc;
     }
+
     const result = acc.map((a, idx) => {
         const def = ASSETS[a.asset];
         const mwh = a.mwAcc * SP_DURATION_H;
-        const grossRevenue = a.mwAcc * +a.price * SP_DURATION_H;
+        const grossRevenue = a.mwAcc * cp * SP_DURATION_H * (isShort ? 1 : -1);
         const wearCost = (def?.wear || 0) * mwh;
         let netRevenue = grossRevenue - wearCost;
-        
-        // CfD adjustment for renewables
+
         let cfdAdjustment = 0;
         if (def?.strikePrice) {
             cfdAdjustment = (def.strikePrice - cp) * mwh;
             netRevenue += cfdAdjustment;
         }
-        
+
         return {
             ...a,
             revenue: +netRevenue.toFixed(2),
             wearCost: +wearCost.toFixed(2),
             cfdAdjustment: +cfdAdjustment.toFixed(2),
-            marginal: idx === acc.length - 1, // last accepted unit sets the clearing price
+            marginal: idx === acc.length - 1,
         };
     });
-    return { accepted: result, cp, cleared: Math.abs(niv) - Math.max(0, rem), full: rem <= 0 };
+
+    return {
+        accepted: result,
+        cp,
+        cleared: Math.abs(niv) - Math.max(0, rem),
+        full: rem <= 0.001
+    };
 }
 
 // ─── Day-Ahead Auction Clearing (Pay-As-Clear) ───
@@ -216,7 +353,7 @@ export function clearDA(bids, market_forecast) {
         .sort((a, b) => +a.price - +b.price);
     const demands = bids.filter(b => b.side === "bid" && +b.mw > 0 && !isNaN(+b.price))
         .sort((a, b) => +b.price - +a.price);
-    
+
     // Build supply curve (cumulative MW vs price)
     const supplySteps = [];
     let cumSupply = 0;
@@ -225,7 +362,7 @@ export function clearDA(bids, market_forecast) {
         cumSupply += +o.mw;
         supplySteps.push([cumSupply, +o.price]);
     }
-    
+
     // Build demand curve
     const demandSteps = [];
     let cumDemand = 0;
@@ -234,12 +371,12 @@ export function clearDA(bids, market_forecast) {
         cumDemand += +d.mw;
         demandSteps.push([cumDemand, +d.price]);
     }
-    
+
     // Find intersection
     let cp = market_forecast.baseRef; // default
     let volume = 0;
     const accepted_bids = [];
-    
+
     // Simple intersection: find price where supply >= demand
     for (let i = 0; i < supplySteps.length; i += 2) {
         const [supMW, supPrice] = supplySteps[i];
@@ -249,29 +386,65 @@ export function clearDA(bids, market_forecast) {
             if (supMW <= demMW) {
                 cp = supPrice;
                 volume = supMW;
-                // Accept offers up to this price
+
+                // Accept offers up to this price with pro-rata allocation at marginal price
                 let accCum = 0;
-                for (const o of offers) {
-                    if (+o.price <= cp && accCum < volume) {
-                        const accMW = Math.min(+o.mw, volume - accCum);
-                        accepted_bids.push({ ...o, mwAcc: accMW, revenue: accMW * cp * SP_DURATION_H });
-                        accCum += accMW;
+                const offersAtCp = offers.filter(o => +o.price < cp);
+                const marginalOffers = offers.filter(o => +o.price === cp);
+                const infraMarginalOfferVolume = offersAtCp.reduce((sum, o) => sum + +o.mw, 0);
+                const marginalVolumeNeeded = Math.max(0, volume - infraMarginalOfferVolume);
+                const marginalTotalVolume = marginalOffers.reduce((sum, o) => sum + +o.mw, 0);
+
+                // Accept all infra-marginal offers
+                for (const o of offersAtCp) {
+                    const accMW = +o.mw;
+                    accepted_bids.push({ ...o, mwAcc: accMW, revenue: accMW * cp * SP_DURATION_H });
+                    accCum += accMW;
+                }
+
+                // Pro-rata allocate marginal volume among offers at clearing price
+                if (marginalVolumeNeeded > 0 && marginalTotalVolume > 0) {
+                    for (const o of marginalOffers) {
+                        const proRataShare = (+o.mw / marginalTotalVolume) * marginalVolumeNeeded;
+                        const accMW = Math.min(+o.mw, proRataShare);
+                        if (accMW > 0) {
+                            accepted_bids.push({ ...o, mwAcc: accMW, revenue: accMW * cp * SP_DURATION_H });
+                            accCum += accMW;
+                        }
                     }
                 }
-                // Accept bids down to this price
+
+                // Accept bids down to this price with pro-rata allocation at marginal price
                 accCum = 0;
-                for (const d of demands) {
-                    if (+d.price >= cp && accCum < volume) {
-                        const accMW = Math.min(+d.mw, volume - accCum);
-                        accepted_bids.push({ ...d, mwAcc: accMW, revenue: accMW * cp * SP_DURATION_H });
-                        accCum += accMW;
+                const demandsAtCp = demands.filter(d => +d.price > cp);
+                const marginalDemands = demands.filter(d => +d.price === cp);
+                const infraMarginalDemandVolume = demandsAtCp.reduce((sum, d) => sum + +d.mw, 0);
+                const demandMarginalVolumeNeeded = Math.max(0, volume - infraMarginalDemandVolume);
+                const demandMarginalTotalVolume = marginalDemands.reduce((sum, d) => sum + +d.mw, 0);
+
+                // Accept all infra-marginal demands
+                for (const d of demandsAtCp) {
+                    const accMW = +d.mw;
+                    accepted_bids.push({ ...d, mwAcc: accMW, revenue: -(accMW * cp * SP_DURATION_H) });
+                    accCum += accMW;
+                }
+
+                // Pro-rata allocate marginal volume among demands at clearing price
+                if (demandMarginalVolumeNeeded > 0 && demandMarginalTotalVolume > 0) {
+                    for (const d of marginalDemands) {
+                        const proRataShare = (+d.mw / demandMarginalTotalVolume) * demandMarginalVolumeNeeded;
+                        const accMW = Math.min(+d.mw, proRataShare);
+                        if (accMW > 0) {
+                            accepted_bids.push({ ...d, mwAcc: accMW, revenue: -(accMW * cp * SP_DURATION_H) });
+                            accCum += accMW;
+                        }
                     }
                 }
                 break;
             }
         }
     }
-    
+
     return { cp, volume, accepted_bids };
 }
 
@@ -279,14 +452,14 @@ export function clearDA(bids, market_forecast) {
 export function feedbackMarketState(market, clearResult) {
     const { isShort, niv, baseRef } = market;
     const { cp, cleared } = clearResult;
-    
+
     // Post-clearing residual NIV (after BM dispatch)
     const residualNIV = niv - (isShort ? cleared : -cleared);
-    
+
     // Dynamic Frequency based on residual NIV
     const freqDeviation = clamp(-residualNIV / 190000, -0.4, 0.4);
     const freq = clamp(50 + freqDeviation * (0.5 + Math.random() * 1.0), 49.3, 50.7);
-    
+
     // Clearing-derived SBP/SSP
     let sbp, ssp;
     if (isShort) {
@@ -298,7 +471,7 @@ export function feedbackMarketState(market, clearResult) {
         ssp = Math.min(cp, baseRef * 0.9);
         sbp = baseRef * 1.2;
     }
-    
+
     return {
         ...market,
         freq,
@@ -316,6 +489,7 @@ export function computeForecasts(currentSp, scenarioId, publishedForecast = null
         const state = marketForSp(sp, scenarioId, [], publishedForecast);
         // During DA, players only see the forecast.
         fcasts.push({
+            ...state.forecast,
             sp: state.forecast.sp,
             time: spTime(state.forecast.sp),
             niv: Math.round(state.forecast.niv),
@@ -324,10 +498,9 @@ export function computeForecasts(currentSp, scenarioId, publishedForecast = null
             priceHi: Math.round(state.forecast.sbp * 1.2),
             wf: Math.round(state.forecast.wf * 100),
             sf: Math.round(state.forecast.sf * 100),
-            // We leak the event warning if it's close (simulates weather warning) - avoid leaking exact payload
-            event: offset <= 2 && state.actual.event?.prob > 0.05 ? { id: state.actual.event.id, name: state.actual.event.name, emoji: state.actual.event.emoji } : null,
+            event: offset <= 2 && state.actual.event?.prob > 0.05
+                ? { id: "WARNING", name: "Grid Volatility Warning", emoji: "⚠️" } : null,
             confident: offset <= 2,
-            ...state.forecast // include full raw forecast
         });
     }
     return fcasts;

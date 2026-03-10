@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import SharedLayout from './SharedLayout';
 import { Tip } from '../shared/Tip';
 import { SYSTEM_PARAMS } from '../../shared/constants';
+import MarketOverviewPanel from '../shared/MarketOverviewPanel';
 
 const f0 = p => Number(p).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -70,7 +71,7 @@ export default function TraderScreen(props) {
         daMyBid, setDaMyBid, daSubmitted, onDaSubmit,
         idMyOrder, setIdMyOrder, idSubmitted, onIdSubmit,
         spContracts, pid, cash, contractPosition,
-        forecasts, publishedForecast, daOrderBook, idOrderBook
+        forecasts, publishedForecast, daOrderBook, daResult, idOrderBook, bmOrderBook, simRes, currentSp
     } = props;
 
     const [tab, setTab] = useState("DA");
@@ -79,6 +80,9 @@ export default function TraderScreen(props) {
 
     // Margin calculation: Starting cash + P&L + bonus from SYSTEM_PARAMS
     const margin = cash + SYSTEM_PARAMS.traderStartCapitalBonus;
+    const marginFloor = 1000;
+    const marginHeadroom = Math.max(0, margin - marginFloor);
+    const marginPct = Math.min(100, (margin / 5000) * 100);
 
     const topRight = (
         <div style={{ display: "flex", gap: 12 }}>
@@ -99,6 +103,15 @@ export default function TraderScreen(props) {
 
     const left = (
         <div style={{ padding: 16, display: "flex", flexDirection: "column", height: "100%", gap: 12 }}>
+            {/* Giant position indicator */}
+            <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 8, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: "#4d7a96", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Net Open Position</div>
+                <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 28, fontWeight: 900, color: currentPos > 0 ? "#1de98b" : currentPos < 0 ? "#f0455a" : "#ddeeff" }}>
+                    {currentPos > 0 ? `LONG ${f0(currentPos)} MW` : currentPos < 0 ? `SHORT ${f0(Math.abs(currentPos))} MW` : "FLAT"}
+                </div>
+            </div>
+
+            {/* Existing active position context */}
             <Panel borderColor={currentPos > 0 ? "#1de98b" : currentPos < 0 ? "#f0455a" : "#1a3045"}>
                 <div style={{ fontSize: 9, color: "#4d7a96", marginBottom: 4, letterSpacing: 1, textTransform: "uppercase" }}>Active Position (SP{sp})</div>
                 <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 24, fontWeight: 900, color: getPosColor(currentPos) }}>
@@ -112,6 +125,24 @@ export default function TraderScreen(props) {
                     </div>
                 )}
             </Panel>
+
+            {/* Margin floor proximity bar */}
+            <div style={{ marginTop: 4, padding: "12px", background: "#050e16", borderRadius: 6, border: "1px solid #1a3045" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#2a5570", marginBottom: 6 }}>
+                    <span>MARGIN FLOOR (£{marginFloor})</span>
+                    <span style={{ color: margin <= marginFloor * 1.5 ? "#f0455a" : "#1de98b", fontWeight: 700 }}>
+                        £{f0(marginHeadroom)} HEADROOM
+                    </span>
+                </div>
+                <div style={{ height: 8, background: "#1a3045", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{
+                        height: "100%",
+                        width: `${Math.max(5, marginPct)}%`,
+                        background: margin <= marginFloor * 1.2 ? "#f0455a" : margin <= marginFloor * 1.5 ? "#f5b222" : "#1de98b",
+                        transition: "width 0.3s, background 0.3s"
+                    }} />
+                </div>
+            </div>
 
             <Panel bg="#08141f" style={{ flex: 1, overflowY: "auto" }}>
                 <h3 style={{ fontSize: 10, color: "#4d7a96", marginBottom: 12, letterSpacing: 1 }}>LIVE NESO FORECAST</h3>
@@ -177,7 +208,39 @@ export default function TraderScreen(props) {
                             <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
                                 <div style={{ flex: 1 }}>
                                     <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 4, display: "block" }}>VOLUME (MW)</label>
-                                    <input type="number" value={daMyBid.mw} disabled={daSubmitted || phase !== "DA"} onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value }))} style={{ width: "100%", padding: "8px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                    {/* Pre-trade margin check: Calculate max safe volume */}
+                                    {useMemo(() => {
+                                        const priceLimit = parseFloat(daMyBid.price) || 50;
+                                        const maxSafeMW = Math.floor(margin / (priceLimit * 0.5));
+                                        const currentMW = parseFloat(daMyBid.mw) || 0;
+                                        const exceedsMargin = currentMW > maxSafeMW && daMyBid.mw !== "";
+
+                                        return (
+                                            <>
+                                                <input
+                                                    type="number"
+                                                    value={daMyBid.mw}
+                                                    disabled={daSubmitted || phase !== "DA"}
+                                                    onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value }))}
+                                                    style={{
+                                                        width: "100%",
+                                                        padding: "8px",
+                                                        background: "#102332",
+                                                        border: `1px solid ${exceedsMargin ? "#f0455a" : "#234159"}`,
+                                                        borderRadius: 6,
+                                                        color: "#ddeeff",
+                                                        fontSize: 14,
+                                                        fontFamily: "'JetBrains Mono'"
+                                                    }}
+                                                />
+                                                {exceedsMargin && (
+                                                    <div style={{ fontSize: 8, color: "#f0455a", marginTop: 4, fontWeight: 700 }}>
+                                                        ⚠️ Exceeds margin! Max: {f0(maxSafeMW)} MW
+                                                    </div>
+                                                )}
+                                            </>
+                                        );
+                                    }, [daMyBid.mw, daMyBid.price, margin])}
                                 </div>
                                 <div style={{ flex: 1 }}>
                                     <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 4, display: "block" }}>PRICE LIMIT £/MWh</label>
@@ -185,20 +248,25 @@ export default function TraderScreen(props) {
                                 </div>
                             </div>
 
-                            <button onClick={onDaSubmit} disabled={daSubmitted || phase !== "DA" || !daMyBid.price} style={{ width: "100%", padding: "12px", background: daSubmitted || phase !== "DA" ? "#1a3045" : "#f5b222", border: "none", borderRadius: 8, color: daSubmitted || phase !== "DA" ? "#4d7a96" : "#050e16", fontWeight: 900, fontSize: 12, cursor: daSubmitted || phase !== "DA" ? "default" : "pointer", marginBottom: 16 }}>
+                            <button onClick={onDaSubmit} disabled={daSubmitted || phase !== "DA" || !daMyBid.price || (() => { const priceLimit = parseFloat(daMyBid.price) || 50; const maxSafeMW = Math.floor(margin / (priceLimit * 0.5)); const currentMW = parseFloat(daMyBid.mw) || 0; return currentMW > maxSafeMW && daMyBid.mw !== ""; })()} style={{ width: "100%", padding: "12px", background: daSubmitted || phase !== "DA" ? "#1a3045" : "#f5b222", border: "none", borderRadius: 8, color: daSubmitted || phase !== "DA" ? "#4d7a96" : "#050e16", fontWeight: 900, fontSize: 12, cursor: daSubmitted || phase !== "DA" ? "default" : "pointer", marginBottom: 16 }}>
                                 {phase !== "DA" ? "AWAITING DA PHASE..." : daSubmitted ? "✓ POSITION LOCKED" : "SUBMIT SPECULATIVE POSITION →"}
                             </button>
                         </div>
 
-                        <div style={{ flex: 1, background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 6, padding: 8, overflowY: "auto" }}>
-                            <div style={{ fontSize: 9, color: "#4d7a96", marginBottom: 8, fontWeight: "bold" }}>DA AUCTION BIDS</div>
-                            {daOrderBook && daOrderBook.length > 0 ? daOrderBook.map((b, i) => (
-                                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 10, padding: "4px 0", borderBottom: "1px solid #1a3045" }}>
-                                    <span style={{ color: b.side === "bid" ? "#1de98b" : "#f0455a" }}>{b.side.toUpperCase()}</span>
-                                    <span style={{ color: "#ddeeff" }}>{f0(b.mw)} MW</span>
-                                    <span style={{ fontFamily: "'JetBrains Mono'", color: "#f5b222" }}>£{f0(b.price)}</span>
-                                </div>
-                            )) : <div style={{ fontSize: 9, color: "#2a5570", fontStyle: "italic" }}>No bids submitted yet...</div>}
+                        <div style={{ flex: 1, position: "relative" }}>
+                            <MarketOverviewPanel
+                                phase={phase}
+                                daOrderBook={daOrderBook}
+                                daResult={daResult}
+                                idOrderBook={idOrderBook}
+                                spContracts={spContracts}
+                                currentSp={currentSp}
+                                msLeft={msLeft}
+                                tickSpeed={tickSpeed}
+                                bmOrderBook={bmOrderBook}
+                                market={market}
+                                simRes={simRes}
+                            />
                         </div>
                     </>
                 )}
@@ -206,18 +274,49 @@ export default function TraderScreen(props) {
                 {tab === "ID" && (
                     <>
                         <div style={{ flexShrink: 0 }}>
-                            <h4 style={{ fontSize: 12, color: "#38c0fc", marginBottom: 4, letterSpacing: 1 }}>🤝 INTRADAY TRADING</h4>
-                            <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.4 }}>Hit the order book to close out your positions or take new ones based on forecast updates.</p>
+                            <h4 style={{ fontSize: 12, color: "#38c0fc", marginBottom: 4, letterSpacing: 1 }}>🔄 INTRADAY ADJUSTMENT</h4>
+                            <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.4 }}>Adjust or close your DA position based on updated market intel. Counter-trade to lock in profits or cut losses.</p>
 
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                                <ActionButton onClick={() => setIdMyOrder(b => ({ ...b, side: "buy" }))} disabled={idSubmitted || phase !== "ID"} active={idMyOrder.side === "buy"} activeBg="#38c0fc22" activeBorder="#38c0fc" activeColor="#38c0fc" label="BUY POSITION" />
-                                <ActionButton onClick={() => setIdMyOrder(b => ({ ...b, side: "sell" }))} disabled={idSubmitted || phase !== "ID"} active={idMyOrder.side === "sell"} activeBg="#f0455a22" activeBorder="#f0455a" activeColor="#f0455a" label="SELL POSITION" />
+                                <ActionButton onClick={() => setIdMyOrder(b => ({ ...b, side: "buy" }))} disabled={idSubmitted || phase !== "ID"} active={idMyOrder.side === "buy"} activeBg="#1de98b22" activeBorder="#1de98b" activeColor="#1de98b" label="BUY (Go Long)" />
+                                <ActionButton onClick={() => setIdMyOrder(b => ({ ...b, side: "sell" }))} disabled={idSubmitted || phase !== "ID"} active={idMyOrder.side === "sell"} activeBg="#f0455a22" activeBorder="#f0455a" activeColor="#f0455a" label="SELL (Go Short)" />
                             </div>
 
                             <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
                                 <div style={{ flex: 1 }}>
                                     <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 4, display: "block" }}>VOLUME (MW)</label>
-                                    <input type="number" value={idMyOrder.mw} disabled={idSubmitted || phase !== "ID"} onChange={e => setIdMyOrder(b => ({ ...b, mw: e.target.value }))} style={{ width: "100%", padding: "8px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                    {useMemo(() => {
+                                        const priceLimit = parseFloat(idMyOrder.price) || 50;
+                                        const maxSafeMW = Math.floor(margin / (priceLimit * 0.5));
+                                        const currentMW = parseFloat(idMyOrder.mw) || 0;
+                                        const exceedsMargin = currentMW > maxSafeMW && idMyOrder.mw !== "";
+
+                                        return (
+                                            <>
+                                                <input
+                                                    type="number"
+                                                    value={idMyOrder.mw}
+                                                    disabled={idSubmitted || phase !== "ID"}
+                                                    onChange={e => setIdMyOrder(b => ({ ...b, mw: e.target.value }))}
+                                                    style={{
+                                                        width: "100%",
+                                                        padding: "8px",
+                                                        background: "#102332",
+                                                        border: `1px solid ${exceedsMargin ? "#f0455a" : "#234159"}`,
+                                                        borderRadius: 6,
+                                                        color: "#ddeeff",
+                                                        fontSize: 14,
+                                                        fontFamily: "'JetBrains Mono'"
+                                                    }}
+                                                />
+                                                {exceedsMargin && (
+                                                    <div style={{ fontSize: 8, color: "#f0455a", marginTop: 4, fontWeight: 700 }}>
+                                                        ⚠️ Exceeds margin! Max: {f0(maxSafeMW)} MW
+                                                    </div>
+                                                )}
+                                            </>
+                                        );
+                                    }, [idMyOrder.mw, idMyOrder.price, margin])}
                                 </div>
                                 <div style={{ flex: 1 }}>
                                     <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 4, display: "block" }}>PRICE LIMIT £/MWh</label>
@@ -225,20 +324,25 @@ export default function TraderScreen(props) {
                                 </div>
                             </div>
 
-                            <button onClick={onIdSubmit} disabled={idSubmitted || phase !== "ID" || !idMyOrder.price} style={{ width: "100%", padding: "12px", background: idSubmitted || phase !== "ID" ? "#1a3045" : "#38c0fc", border: "none", borderRadius: 8, color: idSubmitted || phase !== "ID" ? "#4d7a96" : "#050e16", fontWeight: 900, fontSize: 12, cursor: idSubmitted || phase !== "ID" ? "default" : "pointer", marginBottom: 16 }}>
-                                {phase !== "ID" ? "AWAITING ID PHASE..." : idSubmitted ? "✓ ORDER PUBLISHED" : "SUBMIT TO ORDERBOOK →"}
+                            <button onClick={onIdSubmit} disabled={idSubmitted || phase !== "ID" || !idMyOrder.price || (() => { const priceLimit = parseFloat(idMyOrder.price) || 50; const maxSafeMW = Math.floor(margin / (priceLimit * 0.5)); const currentMW = parseFloat(idMyOrder.mw) || 0; return currentMW > maxSafeMW && idMyOrder.mw !== ""; })()} style={{ width: "100%", padding: "12px", background: idSubmitted || phase !== "ID" ? "#1a3045" : "#38c0fc", border: "none", borderRadius: 8, color: idSubmitted || phase !== "ID" ? "#4d7a96" : "#050e16", fontWeight: 900, fontSize: 12, cursor: idSubmitted || phase !== "ID" ? "default" : "pointer", marginBottom: 16 }}>
+                                {phase !== "ID" ? "AWAITING ID PHASE..." : idSubmitted ? "✓ ID ORDER PUBLISHED" : "SUBMIT ID ORDER →"}
                             </button>
                         </div>
 
-                        <div style={{ flex: 1, background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 6, padding: 8, overflowY: "auto" }}>
-                            <div style={{ fontSize: 9, color: "#4d7a96", marginBottom: 8, fontWeight: "bold" }}>ID ORDER BOOK</div>
-                            {idOrderBook && idOrderBook.length > 0 ? idOrderBook.map((b, i) => (
-                                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 10, padding: "4px 0", borderBottom: "1px solid #1a3045" }}>
-                                    <span style={{ color: b.side === "bid" ? "#1de98b" : "#f0455a" }}>{b.side.toUpperCase()}</span>
-                                    <span style={{ color: "#ddeeff" }}>{f0(b.mw)} MW</span>
-                                    <span style={{ fontFamily: "'JetBrains Mono'", color: "#38c0fc" }}>£{f0(b.price)}</span>
-                                </div>
-                            )) : <div style={{ fontSize: 9, color: "#2a5570", fontStyle: "italic" }}>No orders submitted yet...</div>}
+                        <div style={{ flex: 1, position: "relative" }}>
+                            <MarketOverviewPanel
+                                phase={phase}
+                                daOrderBook={daOrderBook}
+                                daResult={daResult}
+                                idOrderBook={idOrderBook}
+                                spContracts={spContracts}
+                                currentSp={currentSp}
+                                msLeft={msLeft}
+                                tickSpeed={tickSpeed}
+                                bmOrderBook={bmOrderBook}
+                                market={market}
+                                simRes={simRes}
+                            />
                         </div>
                     </>
                 )}

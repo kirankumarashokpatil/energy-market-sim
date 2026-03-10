@@ -2,8 +2,7 @@
 // Tracks system-level metrics across settlement periods.
 // Computes NIV tracking, system impact attribution, and builds player stats for scoring.
 
-import { SCORING_CONFIG } from '../shared/constants.js';
-import { ASSETS } from '../shared/constants.js';
+import { SCORING_CONFIG, ASSETS, SP_DURATION_H } from '../shared/constants.js';
 
 // ─── Create Initial System State ───
 export function createSystemState() {
@@ -115,7 +114,7 @@ export function buildPlayerStats(role, data) {
         totalBmRev += Math.abs(sp.bmRev || 0);
         totalDaRev += Math.abs(sp.daRev || 0);
         totalIdRev += Math.abs(sp.idRev || 0);
-        totalMWh += Math.abs(sp.contractPosMw || 0) * 0.5; // MW * 0.5h per SP
+        totalMWh += Math.abs(sp.contractPosMw || 0) * SP_DURATION_H; // MW * time per SP
 
         // Drawdown tracking
         runningPL += spRev;
@@ -246,7 +245,12 @@ export function buildElexonStats(spContracts, spHistory = []) {
             if (c.settlement) {
                 settledSPs++;
                 // Check internal consistency: total should = sum of components
-                const expected = (c.settlement.daCash || 0) + (c.settlement.idCash || 0) + (c.settlement.bmCash || 0) + (c.settlement.imbCash || 0);
+                const expected = (c.settlement.daCash || 0) +
+                    (c.settlement.idCash || 0) +
+                    (c.settlement.bmCash || 0) +
+                    (c.settlement.imbCash || 0) +
+                    (c.settlement.startupCost || 0) +
+                    (c.settlement.operatingCost || 0);
                 const actual = c.settlement.totalCash || 0;
                 totalError += Math.abs(expected - actual);
             }

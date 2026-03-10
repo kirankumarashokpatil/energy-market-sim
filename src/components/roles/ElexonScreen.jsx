@@ -80,7 +80,7 @@ const WaterfallNode = React.forwardRef(({ label, amount, color = "#1e3a5f", high
     </div>
 ));
 
-const SettlementTableRow = ({ row, selected, onClick, S, C }) => {
+const SettlementTableRow = ({ row, selected, onClick, S, C, isWorstOffender }) => {
     const rowRef = useRef(null);
     useEffect(() => {
         if (selected && rowRef.current) {
@@ -91,7 +91,19 @@ const SettlementTableRow = ({ row, selected, onClick, S, C }) => {
     return (
         <tr ref={rowRef} onClick={onClick} style={{ background: selected ? "#1a3045" : "transparent", cursor: "pointer", transition: "background .15s" }}>
             <td style={S.tdLeft}>
-                <div style={{ fontWeight: 600, color: C.text }}>{row.playerName}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ fontWeight: 600, color: C.text }}>{row.playerName}</div>
+                    {isWorstOffender && (
+                        <Tip text={`Highest Imbalance Penalty this SP: £${f0(Math.abs(row.imbCash || row.charge || 0))}`}>
+                            <span style={{
+                                fontSize: 14, marginLeft: 2, cursor: "help",
+                                animation: "pulse 1.5s infinite"
+                            }}>
+                                🚨
+                            </span>
+                        </Tip>
+                    )}
+                </div>
                 <div style={{ fontSize: 10, color: C.faint, ...S.mono }}>{row.role}</div>
             </td>
             <td style={S.td}>{f0(row.contract)}</td>
@@ -207,7 +219,7 @@ const MarketDataPanel = ({ bmMw, mip, fpnTotal, playerList, settledSps, sp, sbpH
     );
 };
 
-const ImbalanceEnginePanel = ({ rowsForSp, playerList, activeRun, selectedPlayerId, setSelectedPlayerId, sp, sbp, ssp, niv, totalImbal, totalCharge, totalCleared, totalPayable, totalReceivable, C, S }) => {
+    const ImbalanceEnginePanel = ({ rowsForSp, playerList, activeRun, selectedPlayerId, setSelectedPlayerId, sp, sbp, ssp, niv, totalImbal, totalCharge, totalCleared, C, S }) => {
     const waterfallRefs = useRef({});
 
     useEffect(() => {
@@ -215,6 +227,9 @@ const ImbalanceEnginePanel = ({ rowsForSp, playerList, activeRun, selectedPlayer
             waterfallRefs.current[selectedPlayerId].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
         }
     }, [selectedPlayerId]);
+
+    // Identify the player with the highest absolute imbalance penalty this SP
+    const worstPenaltyAmount = Math.max(...rowsForSp.map(r => Math.abs(r.imbCash || r.charge || 0)), 0);
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
@@ -237,6 +252,34 @@ const ImbalanceEnginePanel = ({ rowsForSp, playerList, activeRun, selectedPlayer
                 </div>
 
                 <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
+                    {rowsForSp.length > 0 && (
+                        <>
+                            {/* Aggregate System Imbalance Metrics - Elevated to Top */}
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+                                <div style={{ ...S.panel, padding: "10px 12px" }}>
+                                    <div style={{ fontSize: 9, color: C.sub, marginBottom: 4, fontWeight: 600 }}>TOTAL SYSTEM IMBALANCE</div>
+                                    <div style={{ fontSize: 18, fontWeight: 900, color: totalImbal > 0 ? C.blue : totalImbal < 0 ? C.red : C.sub, ...S.mono }}>
+                                        {totalImbal > 0 ? "+" : ""}{f0(totalImbal)} MW
+                                    </div>
+                                </div>
+                                <div style={{ ...S.panel, padding: "10px 12px", border: `2px solid ${C.blue}`, boxShadow: "0 0 8px #3b82f644" }}>
+                                    <div style={{ fontSize: 9, color: C.sub, marginBottom: 4, fontWeight: 600 }}>CLEARING COST (£)</div>
+                                    <div style={{ fontSize: 18, fontWeight: 900, color: C.red, ...S.mono }}>
+                                        £{f0(totalCharge)}k
+                                    </div>
+                                </div>
+                                <div style={{ ...S.panel, padding: "10px 12px" }}>
+                                    <div style={{ fontSize: 9, color: C.sub, marginBottom: 4, fontWeight: 600 }}>TOP ERROR RISK</div>
+                                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, ...S.mono }}>
+                                        {(() => {
+                                            const topError = rowsForSp.reduce((max, r) => Math.abs(r.charge) > Math.abs(max.charge) ? r : max, rowsForSp[0] || {});
+                                            return topError.playerName ? `${topError.playerName}: £${f0(Math.abs(topError.charge))}k` : "—";
+                                        })()}
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    )}
                     {rowsForSp.length > 0 ? (
                         <table style={{ width: "100%", borderCollapse: "collapse" }}>
                             <thead>
@@ -252,12 +295,21 @@ const ImbalanceEnginePanel = ({ rowsForSp, playerList, activeRun, selectedPlayer
                                 </tr>
                             </thead>
                             <tbody>
-                                {rowsForSp.map((r, i) => (
-                                    <SettlementTableRow
-                                        key={r.playerId} row={r} selected={selectedPlayerId === r.playerId}
-                                        onClick={() => setSelectedPlayerId(r.playerId)} S={S} C={C}
-                                    />
-                                ))}
+                                {rowsForSp.map((r) => {
+                                    const myPenaltyAmount = Math.abs(r.imbCash || r.charge || 0);
+                                    const isWorstOffender = myPenaltyAmount > 0 && myPenaltyAmount === worstPenaltyAmount;
+                                    return (
+                                        <SettlementTableRow
+                                            key={r.playerId}
+                                            row={r}
+                                            selected={selectedPlayerId === r.playerId}
+                                            onClick={() => setSelectedPlayerId(r.playerId)}
+                                            S={S}
+                                            C={C}
+                                            isWorstOffender={isWorstOffender}
+                                        />
+                                    );
+                                })}
                                 {/* Total row */}
                                 <tr style={{ background: C.navyPanel, fontWeight: 700 }}>
                                     <td style={{ ...S.tdLeft, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
@@ -347,7 +399,7 @@ const ImbalanceEnginePanel = ({ rowsForSp, playerList, activeRun, selectedPlayer
     );
 };
 
-const SettlementTimelinePanel = ({ phase, activeRun, spContracts, C, S }) => {
+const SettlementTimelinePanel = ({ phase, activeRun, C, S }) => {
     const dateStr = useMemo(() => {
         return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date());
     }, []);
@@ -445,19 +497,16 @@ const SettlementTimelinePanel = ({ phase, activeRun, spContracts, C, S }) => {
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function ElexonScreen(props) {
     const {
-        market, sp, msLeft, tickSpeed, phase, spHistory, spContracts, players,
-        leaderboard, allBids, paused, freqBreachSec,
-        onNextPhase, onPauseToggle
+        market, sp, phase, spHistory, spContracts, players,
+        allBids,
     } = props;
 
     const [selectedPlayerId, setSelectedPlayerId] = useState(null);
-    const [selectedSp, setSelectedSp] = useState(sp);
+    const [selectedSp] = useState(sp);
     const activeRun = "II";
 
-    useEffect(() => setSelectedSp(sp), [sp]);
-
-    const currentMkt = market?.actual || market?.forecast || { sbp: 50, ssp: 50, niv: 0, freq: 50 };
-    const { sbp = 50, ssp = 50, niv = 0, freq = 50 } = currentMkt;
+    const currentMkt = market?.actual || market?.forecast || { sbp: 50, ssp: 50, niv: 0 };
+    const { sbp = 50, ssp = 50, niv = 0 } = currentMkt;
 
     const sbpHistory = useMemo(() => spHistory.map(h => h.sbp || h.cp || sbp), [spHistory, sbp]);
     const sspHistory = useMemo(() => spHistory.map(h => h.ssp || ssp), [spHistory, ssp]);
@@ -526,13 +575,13 @@ export default function ElexonScreen(props) {
             selectedPlayerId={selectedPlayerId} setSelectedPlayerId={setSelectedPlayerId}
             sp={selectedSp} sbp={sbp} ssp={ssp} niv={niv}
             totalImbal={totalImbal} totalCharge={totalCharge} totalCleared={totalCleared}
-            totalPayable={totalPayable} totalReceivable={totalReceivable} C={C} S={S}
+            C={C} S={S}
         />
     );
 
     const right = (
         <SettlementTimelinePanel
-            phase={phase} activeRun={activeRun} spContracts={spContracts} C={C} S={S}
+            phase={phase} activeRun={activeRun} C={C} S={S}
         />
     );
 

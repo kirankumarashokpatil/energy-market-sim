@@ -139,6 +139,10 @@ class ForecastEngine {
     _publish(version) {
         this.published = version;
         this.history.push(version);
+        // Sliding window: keep only last 50 versions to prevent memory bloat
+        if (this.history.length > 50) {
+            this.history.shift();
+        }
         // Ideally this emits an event that socket/MarketEngine listens to.
         console.log(`[ForecastEngine] Published new version ${version.id} by ${version.author}`);
     }

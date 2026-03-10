@@ -24,24 +24,33 @@ export default function GeneratorScreen(props) {
     const sbp = currentMkt?.sbp || 50; const ssp = currentMkt?.ssp || 50;
 
     // Revenue calculations
-    // Bug fix: totalRev was Number(cash || 0), silently dropping daCash from the breakdown.
-    // Both cash (BM/imbalance settlements) and daCash (Day-Ahead revenue) must be summed.
-    const totalRev = Number(cash || 0) + Number(daCash || 0);
+    // Bug fix: totalRev was adding cash + daCash which double-counts DA revenue since cash already includes it.
+    const totalRev = Number(cash || 0);
     const cSp = spContracts[sp]?.[pid] || { physicalMw: 0 };
     const risk = { expectedImbMw: Math.abs(contractPosition - (cSp.bmAccepted?.mw || 0)), worstCaseCost: Math.abs(contractPosition - (cSp.bmAccepted?.mw || 0)) * Math.max(sbp, ssp) };
 
     // Physics state fallbacks
     const pState = physicalState || { status: "ONLINE", currentMw: 0, spUntilOnline: 0 };
 
-    // --- TOP RIGHT (NET POS) ---
+    // --- TOP RIGHT (NET POS + SYSTEM STATS) ---
+    const systemMarket = market?.actual || market?.forecast || {};
+    const sysDemand = systemMarket.system?.demandMw || 0;
+    const sysWind = systemMarket.system?.windMw || 0;
+    const sysSolar = systemMarket.system?.solarMw || 0;
+
     const topRight = (
-        <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
             <Tip text="Net Position: The total volume you have contracted to deliver. This is your Physical Notification (PN)." align="right">
                 <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", padding: "4px 8px", borderRadius: 4, display: "flex", flexDirection: "column" }}>
                     <span style={{ fontSize: 7.5, color: "#4d7a96", borderBottom: "1px dashed #4d7a96", cursor: "help" }}>NET POS (SP{sp})</span>
                     <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 11, fontWeight: 800, color: "#ddeeff" }}>{f0(contractPosition)} MW</span>
                 </div>
             </Tip>
+            <div style={{ display: "flex", gap: 6, fontSize: 10, alignItems: "baseline" }}>
+                <span style={{ color: "#4d7a96" }}>SYS DMD</span><span style={{ fontFamily: "'JetBrains Mono'", fontSize: 11, fontWeight: 800, color: "#f5b222" }}>{f0(sysDemand)}</span>
+                <span style={{ color: "#4d7a96" }}>WIND</span><span style={{ fontFamily: "'JetBrains Mono'", fontSize: 11, fontWeight: 800, color: "#a3e635" }}>{f0(sysWind)}</span>
+                <span style={{ color: "#4d7a96" }}>SOLAR</span><span style={{ fontFamily: "'JetBrains Mono'", fontSize: 11, fontWeight: 800, color: "#fbbf24" }}>{f0(sysSolar)}</span>
+            </div>
         </div>
     );
 
@@ -105,7 +114,7 @@ export default function GeneratorScreen(props) {
 
     const sect2Availability = (
         <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 8, padding: 16, display: "flex", flexDirection: "column" }}>
-            <div style={{ fontSize: 10, color: "#4d7a96", fontWeight: 800, textTransform: "uppercase", marginBottom: 12 }}>2. Live Status</div>
+            <div style={{ fontSize: 10, color: "#4d7a96", fontWeight: 800, textTransform: "uppercase", marginBottom: 12 }}>2. {(def.kind === "wind" || def.kind === "solar") ? "Weather Conditions" : "Live Status"}</div>
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, background: "#050e16", padding: "8px 12px", border: "1px solid #1a3045", borderRadius: 6 }}>
                 <div>
@@ -120,22 +129,72 @@ export default function GeneratorScreen(props) {
                 )}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                <div>
-                    <div style={{ fontSize: 8.5, color: "#4d7a96", marginBottom: 4 }}>CURRENT OUTPUT</div>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                        <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 24, fontWeight: 900, color: "#ddeeff" }}>{f0(pState.currentMw)}</span>
-                        <span style={{ fontSize: 12, color: "#2a5570" }}>MW</span>
+            {def.kind === "wind" ? (
+                (() => {
+                    const windPct = currentMkt?.wf ? Math.round(currentMkt.wf * 100) : 0;
+                    const windColor = windPct < 30 ? "#f0455a" : windPct < 60 ? "#f5b222" : "#1de98b";
+                    const expectedMw = (windPct / 100) * (def.maxMW || 0);
+                    return (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                            <div style={{ background: "#050e16", border: "1px solid #1a3045", padding: "8px 12px", borderRadius: 6 }}>
+                                <div style={{ fontSize: 8.5, color: "#4d7a96", marginBottom: 4 }}>WIND STRENGTH</div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 28, fontWeight: 900, color: windColor }}>{windPct}</span>
+                                    <span style={{ fontSize: 12, color: windColor, fontWeight: 700 }}>%</span>
+                                </div>
+                            </div>
+                            <div style={{ background: "#050e16", border: "1px solid #1a3045", padding: "8px 12px", borderRadius: 6 }}>
+                                <div style={{ fontSize: 8.5, color: "#4d7a96", marginBottom: 4 }}>EXPECTED OUTPUT</div>
+                                <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 20, fontWeight: 900, color: "#ddeeff" }}>{f0(expectedMw)}</span>
+                                    <span style={{ fontSize: 12, color: "#2a5570" }}>MW</span>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()
+            ) : def.kind === "solar" ? (
+                (() => {
+                    const solarPct = currentMkt?.sf ? Math.round(currentMkt.sf * 100) : 0;
+                    const solarColor = solarPct < 15 ? "#f0455a" : solarPct < 50 ? "#f5b222" : "#fde047";
+                    const expectedMw = (solarPct / 100) * (def.maxMW || 0);
+                    return (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                            <div style={{ background: "#050e16", border: "1px solid #1a3045", padding: "8px 12px", borderRadius: 6 }}>
+                                <div style={{ fontSize: 8.5, color: "#4d7a96", marginBottom: 4 }}>SOLAR IRRADIANCE</div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 28, fontWeight: 900, color: solarColor }}>{solarPct}</span>
+                                    <span style={{ fontSize: 12, color: solarColor, fontWeight: 700 }}>%</span>
+                                </div>
+                            </div>
+                            <div style={{ background: "#050e16", border: "1px solid #1a3045", padding: "8px 12px", borderRadius: 6 }}>
+                                <div style={{ fontSize: 8.5, color: "#4d7a96", marginBottom: 4 }}>EXPECTED OUTPUT</div>
+                                <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 20, fontWeight: 900, color: "#ddeeff" }}>{f0(expectedMw)}</span>
+                                    <span style={{ fontSize: 12, color: "#2a5570" }}>MW</span>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()
+            ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                    <div>
+                        <div style={{ fontSize: 8.5, color: "#4d7a96", marginBottom: 4 }}>CURRENT OUTPUT</div>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 24, fontWeight: 900, color: "#ddeeff" }}>{f0(pState.currentMw)}</span>
+                            <span style={{ fontSize: 12, color: "#2a5570" }}>MW</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div style={{ fontSize: 8.5, color: "#4d7a96", marginBottom: 4 }}>THEORETICAL LIMIT</div>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 24, fontWeight: 900, color: def.col }}>{f0(theoreticalMaxMw)}</span>
+                            <span style={{ fontSize: 12, color: "#2a5570" }}>MW</span>
+                        </div>
                     </div>
                 </div>
-                <div>
-                    <div style={{ fontSize: 8.5, color: "#4d7a96", marginBottom: 4 }}>THEORETICAL LIMIT</div>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                        <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 24, fontWeight: 900, color: def.col }}>{f0(theoreticalMaxMw)}</span>
-                        <span style={{ fontSize: 12, color: "#2a5570" }}>MW</span>
-                    </div>
-                </div>
-            </div>
+            )}
 
             <div style={{ marginTop: "auto", background: maxReachableMw === 0 && def.startupTime > 0 && pState.status === "OFFLINE" ? "#1f0709" : "#071f13", border: `1px solid ${maxReachableMw === 0 && def.startupTime > 0 && pState.status === "OFFLINE" ? "#f0455a" : "#1de98b"}44`, borderRadius: 6, padding: "8px 10px" }}>
                 <div style={{ fontSize: 8.5, color: maxReachableMw === 0 && def.startupTime > 0 && pState.status === "OFFLINE" ? "#f0455a" : "#1de98b", fontWeight: 700 }}>
@@ -177,7 +236,7 @@ export default function GeneratorScreen(props) {
                     {daMyBid.mw > 0 && daMyBid.mw < (def?.minMw || 0) && (
                         <div style={{ fontSize: 8.5, color: "#f5b222", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Bidding below Min Stable ({def.minMw}MW) will trip the plant offline.</div>
                     )}
-                    <button onClick={onDaSubmit} disabled={daSubmitted || !daMyBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: daSubmitted ? "#1a3045" : "#f5b222", border: "none", borderRadius: 6, color: daSubmitted ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: daSubmitted ? "default" : "pointer" }}>
+                    <button data-testid="gen-submit-da-offer" onClick={onDaSubmit} disabled={daSubmitted || !daMyBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: daSubmitted ? "#1a3045" : "#f5b222", border: "none", borderRadius: 6, color: daSubmitted ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: daSubmitted ? "default" : "pointer" }}>
                         {daSubmitted ? "✓ DA OFFER LOCKED" : "SUBMIT DA OFFER →"}
                     </button>
                 </>
@@ -203,7 +262,7 @@ export default function GeneratorScreen(props) {
                     {idMyOrder.mw > 0 && idMyOrder.mw < (def?.minMw || 0) && (
                         <div style={{ fontSize: 8.5, color: "#f5b222", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Warning: Output below Min Stable ({def.minMw}MW) will trip the plant.</div>
                     )}
-                    <button onClick={onIdSubmit} disabled={idSubmitted || !idMyOrder.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: idSubmitted ? "#1a3045" : "#38c0fc", border: "none", borderRadius: 6, color: idSubmitted ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: idSubmitted ? "default" : "pointer" }}>
+                    <button data-testid="gen-submit-id-order" onClick={onIdSubmit} disabled={idSubmitted || !idMyOrder.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: idSubmitted ? "#1a3045" : "#38c0fc", border: "none", borderRadius: 6, color: idSubmitted ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: idSubmitted ? "default" : "pointer" }}>
                         {idSubmitted ? "✓ ID ORDER PUBLISHED" : "SUBMIT ID ORDER →"}
                     </button>
                 </>
@@ -231,12 +290,18 @@ export default function GeneratorScreen(props) {
                             <input type="number" value={myBid.price} placeholder={`~£${f0((isShort ? sbp * SYSTEM_PARAMS.bidStrategyMultipliers.genBM.sbpMultiplier : ssp * SYSTEM_PARAMS.bidStrategyMultipliers.genBM.sspMultiplier))}`} disabled={submitted || phase !== "BM"} onChange={e => setMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#1de98b", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
                         </div>
                     </div>
-
-                    {myBid.mw > 0 && myBid.mw < (def?.minMw || 0) && (
-                        <div style={{ fontSize: 8.5, color: "#f5b222", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Bidding below Min Stable ({def.minMw}MW) will trip the plant offline.</div>
+                    {def.minMw && Number(myBid.mw) > 0 && Number(myBid.mw) < def.minMw && (
+                        <div style={{
+                            marginTop: 8, marginBottom: 8, padding: "8px 12px", borderRadius: 6,
+                            background: "#1f0709", border: "1px solid #f0455a88",
+                            color: "#f0455a", fontSize: 10, fontWeight: 700, textAlign: "center",
+                            lineHeight: 1.5
+                        }}>
+                            ⚠ Bid is below Minimum Stable Generation ({def.minMw} MW).<br />
+                            Risk of plant trip if only partially cleared!
+                        </div>
                     )}
-
-                    <button onClick={onSubmit} disabled={submitted || phase !== "BM" || !myBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: submitted || phase !== "BM" ? "#1a3045" : (isShort ? "#f0455a" : "#1de98b"), border: "none", borderRadius: 6, color: submitted || phase !== "BM" ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: submitted || phase !== "BM" ? "default" : "pointer" }}>
+                    <button data-testid="gen-submit-bm" onClick={onSubmit} disabled={submitted || phase !== "BM" || !myBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: submitted || phase !== "BM" ? "#1a3045" : (isShort ? "#f0455a" : "#1de98b"), border: "none", borderRadius: 6, color: submitted || phase !== "BM" ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: submitted || phase !== "BM" ? "default" : "pointer" }}>
                         {phase !== "BM" ? "AWAITING BM PHASE..." : submitted ? "✓ BM BID SUBMITTED" : `SUBMIT ${isShort ? "OFFER" : "BID"} TO NESO →`}
                     </button>
                 </>

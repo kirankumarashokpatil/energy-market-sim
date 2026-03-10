@@ -28,8 +28,14 @@ export default function ForecastPanel({ sp, tickSpeed, publishedForecast, isInst
         const w = 400, h = 200;
         ctx.clearRect(0, 0, w, h);
 
-        const data = draft[activeTab];
-        if (!data) return;
+        // Safety: check if draft and activeTab exist, with fallback rendering
+        const data = draft?.[activeTab];
+        if (!data || !Array.isArray(data) || data.length === 0) {
+            ctx.fillStyle = '#2a5570';
+            ctx.font = '12px Arial';
+            ctx.fillText('Waiting for forecast data...', 20, 100);
+            return;
+        }
 
         // Draw grid
         ctx.strokeStyle = '#1e3a5f';
@@ -48,14 +54,15 @@ export default function ForecastPanel({ sp, tickSpeed, publishedForecast, isInst
         ctx.beginPath();
         for (let i = 0; i < 48; i++) {
             const x = (i / 47) * w;
-            const y = h - (data[i] / max) * h;
+            const val = data?.[i] ?? 0; // Safe access with fallback
+            const y = h - (val / max) * h;
             if (i === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
         }
         ctx.stroke();
 
-        // Draw actuals or published if exists
-        if (canEdit && publishedForecast && publishedForecast[activeTab]) {
+        // Draw actuals or published if exists, with safety check
+        if (canEdit && publishedForecast && publishedForecast[activeTab] && Array.isArray(publishedForecast[activeTab])) {
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
             ctx.lineWidth = 1.5;
             ctx.lineDashOffset = 5;
@@ -63,7 +70,8 @@ export default function ForecastPanel({ sp, tickSpeed, publishedForecast, isInst
             ctx.beginPath();
             for (let i = 0; i < 48; i++) {
                 const x = (i / 47) * w;
-                const y = h - (publishedForecast[activeTab][i] / max) * h;
+                const val = publishedForecast[activeTab]?.[i] ?? 0; // Safe access
+                const y = h - (val / max) * h;
                 if (i === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             }
@@ -193,11 +201,11 @@ export default function ForecastPanel({ sp, tickSpeed, publishedForecast, isInst
                 <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 9, color: "#475569", marginBottom: 2 }}>Current Value (SP{sp})</div>
                     <div style={{ fontSize: 18, fontFamily: "'JetBrains Mono'", color: "#e2e8f0" }}>
-                        {f0(draft[activeTab][Math.max(0, sp - 1) % 48])} MW
+                        {f0(draft?.[activeTab]?.[Math.max(0, sp - 1) % 48] ?? 0)} MW
                     </div>
                 </div>
                 {canEdit && (
-                    <button onClick={handlePublish} style={{ padding: "8px 16px", background: "#f97316", border: "none", borderRadius: 4, color: "#fff", fontWeight: "bold", cursor: "pointer", alignSelf: "flex-end" }}>
+                    <button data-testid="publish-forecast" onClick={handlePublish} style={{ padding: "8px 16px", background: "#f97316", border: "none", borderRadius: 4, color: "#fff", fontWeight: "bold", cursor: "pointer", alignSelf: "flex-end" }}>
                         PUBLISH FORECAST
                     </button>
                 )}
