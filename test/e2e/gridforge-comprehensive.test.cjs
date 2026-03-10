@@ -540,10 +540,20 @@ async function syncPhase(pages, phaseText, timeout = 40000) {
         const matches = await Promise.all(pages.map(async p => {
             try {
                 return await p.evaluate((txt, gunPhase) => {
-                    // Primary: check body text for phase label
-                    if (document.body.textContent.includes(txt)) return true;
-                    // Fallback: check window.gunState.phase (set by SharedLayout)
+                    // Primary: check window.gunState.phase (set by SharedLayout)
                     if (gunPhase && window.gunState && window.gunState.phase === gunPhase) return true;
+
+                    // Fallback: check exact pill text (avoid dictionary body text matches)
+                    const pills = Array.from(document.querySelectorAll('div, span'));
+                    if (pills.some(el =>
+                        el.textContent.toUpperCase() === `📋 ${txt.toUpperCase()}` ||
+                        el.textContent.toUpperCase() === `🤝 ${txt.toUpperCase()}` ||
+                        el.textContent.toUpperCase() === `⚡ ${txt.toUpperCase()}` ||
+                        el.textContent.toUpperCase() === `🏁 ${txt.toUpperCase()}`
+                    )) {
+                        return true;
+                    }
+
                     return false;
                 }, phaseText, expectedGunPhase);
             } catch {
@@ -608,26 +618,38 @@ async function generateGameValues(page, numInputs) {
 /**
  * Discover actual submit button and success messages from game UI.
  */
-async function discoverFormMessages(page) {
-    return await page.evaluate(() => {
+async function discoverFormMessages(page, submitButtonFragment) {
+    return await page.evaluate((fragment) => {
         const allBtns = Array.from(document.querySelectorAll('button'));
-        const submitBtn = allBtns.find(b =>
-            !b.disabled && (
-                b.textContent.toUpperCase().includes('SUBMIT') ||
-                b.textContent.toUpperCase().includes('CONFIRM') ||
-                b.textContent.toUpperCase().includes('SEND') ||
-                b.textContent.includes('→')
-            )
-        );
+
+        // 1. First try to find the specific button requested by fragment
+        let submitBtn = null;
+        if (fragment) {
+            submitBtn = allBtns.find(b =>
+                !b.disabled && b.textContent.toUpperCase().includes(fragment.toUpperCase())
+            );
+        }
+
+        // 2. Fallback to generic heuristic if specific button not found (for backwards compatibility)
+        if (!submitBtn) {
+            submitBtn = allBtns.find(b =>
+                !b.disabled && (
+                    b.textContent.toUpperCase().includes('SUBMIT') ||
+                    b.textContent.toUpperCase().includes('CONFIRM') ||
+                    b.textContent.toUpperCase().includes('SEND') ||
+                    b.textContent.includes('→')
+                )
+            );
+        }
 
         return {
             buttonText: submitBtn ? submitBtn.textContent.trim() : null,
-            allButtons: allBtns.slice(0, 10).map(b => ({
+            allButtons: allBtns.map(b => ({
                 text: b.textContent.trim().substring(0, 60),
                 disabled: b.disabled
             }))
         };
-    });
+    }, submitButtonFragment);
 }
 
 /**
@@ -636,7 +658,7 @@ async function discoverFormMessages(page) {
  */
 async function fillAndSubmit(page, numInputs, submitButtonFragment, successTextToWaitFor) {
     // 1. Discover button and game state
-    const formMsgs = await discoverFormMessages(page);
+    const formMsgs = await discoverFormMessages(page, submitButtonFragment);
     if (!formMsgs.buttonText) {
         throw new Error(`No submit button found. Available buttons: ${JSON.stringify(formMsgs.allButtons)}`);
     }
@@ -1082,16 +1104,18 @@ async function verifyButtonLockout(page, playerName, submitButtonFragment) {
             try {
                 await joinGame(pages[i], ROLES[i]);
                 pass(`Join: ${ROLES[i].name} (${ROLES[i].roleLabel})`);
+
+                // ── CRITICAL: Pause the game immediately to prevent auto-timer from cycling phases ──
+                if (i === iNESO) {
+                    console.log('\n─── Pausing Game to Control Phase Timing ───────────────────');
+                    await sleep(2000);
+                    await pauseGame(pages[iNESO]);
+                    await sleep(2000); // Let pause propagate via GunDB to all clients
+                }
             } catch (e) {
                 fail(`Join: ${ROLES[i].name}`, e);
             }
         }
-
-        // ── CRITICAL: Pause the game immediately to prevent auto-timer from cycling phases ──
-        console.log('\n─── Pausing Game to Control Phase Timing ───────────────────');
-        await sleep(2000);
-        await pauseGame(pages[iNESO]);
-        await sleep(2000); // Let pause propagate via GunDB to all clients
 
         // ── Initial sync check ──
         console.log('\n─── Initial State Verification ────────────────────────────');

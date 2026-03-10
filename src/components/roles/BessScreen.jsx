@@ -406,10 +406,10 @@ export default function BessScreen(props) {
             )}
 
             <div style={{ background: "#08141f", border: "1px solid #1a3045", borderRadius: 8, padding: 12 }}>
-                <div style={{ fontSize: 9, color: "#4d7a96", fontWeight: 700, textTransform: "uppercase", marginBottom: 12 }}>REVENUE BREAKDOWN</div>
+                <div style={{ fontSize: 9, color: "#4d7a96", fontWeight: 700, textTransform: "uppercase", marginBottom: 12 }}>REVENUE BREAKDOWN (Profit/Cycle)</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <div>
-                                <div style={{ fontSize: 8, color: "#2a5570", marginBottom: 2 }}>DA REVENUE</div>
+                        <div style={{ fontSize: 8, color: "#2a5570", marginBottom: 2 }}>DA REVENUE</div>
                         <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, color: "#f5b222", fontWeight: 800 }}>£{f0(daCash || 0)}</div>
                     </div>
                     <div>

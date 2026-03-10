@@ -18,7 +18,7 @@ export function MarketInfoPanel() {
                 }}
             >
                 <span>{show ? "✕" : "ℹ️"}</span>
-                {show ? "Close" : "Learn"}
+                {show ? "Close Dictionary" : "Learn"}
             </button>
 
             {show && (
@@ -132,9 +132,9 @@ export function MarketInfoPanel() {
                                     <span style={{ color: "#f5b222", fontWeight: 800, fontSize: 11 }}>Generator</span>
                                 </div>
                                 <p style={{ margin: "0", fontSize: 9, color: "#94a3b8", lineHeight: 1.5 }}>
-                                    1. <strong>Lock DA</strong> at forecast price<br/>
-                                    2. <strong>Adjust in ID</strong> if winds change<br/>
-                                    3. <strong>Bid BM high</strong> if you'll be short<br/>
+                                    1. <strong>Lock DA</strong> at forecast price<br />
+                                    2. <strong>Adjust in ID</strong> if winds change<br />
+                                    3. <strong>Bid BM high</strong> if you'll be short<br />
                                     💡 Win by selling when SBP spikes
                                 </p>
                             </div>
@@ -145,9 +145,9 @@ export function MarketInfoPanel() {
                                     <span style={{ color: "#f5b222", fontWeight: 800, fontSize: 11 }}>Battery (BESS)</span>
                                 </div>
                                 <p style={{ margin: "0", fontSize: 9, color: "#94a3b8", lineHeight: 1.5 }}>
-                                    1. <strong>Buy cheap DA</strong> (charge)<br/>
-                                    2. <strong>Sell expensive BM</strong> (discharge)<br/>
-                                    3. <strong>Protect SoC</strong>: don't over-discharge<br/>
+                                    1. <strong>Buy cheap DA</strong> (charge)<br />
+                                    2. <strong>Sell expensive BM</strong> (discharge)<br />
+                                    3. <strong>Protect SoC</strong>: don't over-discharge<br />
                                     💡 Win by arbitrage: capture spread between offer/buy prices
                                 </p>
                             </div>
@@ -158,9 +158,9 @@ export function MarketInfoPanel() {
                                     <span style={{ color: "#f5b222", fontWeight: 800, fontSize: 11 }}>Demand Response (DSR)</span>
                                 </div>
                                 <p style={{ margin: "0", fontSize: 9, color: "#94a3b8", lineHeight: 1.5 }}>
-                                    1. <strong>Wait for SBP spike</strong><br/>
-                                    2. <strong>Curtail when desperate</strong> (high SBP)<br/>
-                                    3. <strong>Avoid rebound trap</strong>: don't curtail into another spike<br/>
+                                    1. <strong>Wait for SBP spike</strong><br />
+                                    2. <strong>Curtail when desperate</strong> (high SBP)<br />
+                                    3. <strong>Avoid rebound trap</strong>: don't curtail into another spike<br />
                                     💡 Win by timing: sell flexibility only when valued highest
                                 </p>
                             </div>
@@ -171,9 +171,9 @@ export function MarketInfoPanel() {
                                     <span style={{ color: "#f5b222", fontWeight: 800, fontSize: 11 }}>Trader</span>
                                 </div>
                                 <p style={{ margin: "0", fontSize: 9, color: "#94a3b8", lineHeight: 1.5 }}>
-                                    1. <strong>No physical assets</strong> = must close position<br/>
-                                    2. <strong>Close before BM</strong> or pay SBP/SSP<br/>
-                                    3. <strong>Avoid margin call</strong>: £cash must stay positive<br/>
+                                    1. <strong>No physical assets</strong> = must close position<br />
+                                    2. <strong>Close before BM</strong> or pay SBP/SSP<br />
+                                    3. <strong>Avoid margin call</strong>: £cash must stay positive<br />
                                     💡 Win by spreads: buy DA cheap, sell ID expensive, close clean
                                 </p>
                             </div>
@@ -184,9 +184,9 @@ export function MarketInfoPanel() {
                                     <span style={{ color: "#f5b222", fontWeight: 800, fontSize: 11 }}>Supplier</span>
                                 </div>
                                 <p style={{ margin: "0", fontSize: 9, color: "#94a3b8", lineHeight: 1.5 }}>
-                                    1. <strong>Must cover demand</strong> every SP<br/>
-                                    2. <strong>Lock DA</strong> to lock cost base<br/>
-                                    3. <strong>Over-hedge in ID</strong> when prices jump<br/>
+                                    1. <strong>Must cover demand</strong> every SP<br />
+                                    2. <strong>Lock DA</strong> to lock cost base<br />
+                                    3. <strong>Over-hedge in ID</strong> when prices jump<br />
                                     💡 Win by margin: buy cheap, sell retail at mark-up, avoid SSP penalties
                                 </p>
                             </div>
@@ -197,9 +197,9 @@ export function MarketInfoPanel() {
                                     <span style={{ color: "#f5b222", fontWeight: 800, fontSize: 11 }}>System Operator (NESO)</span>
                                 </div>
                                 <p style={{ margin: "0", fontSize: 9, color: "#94a3b8", lineHeight: 1.5 }}>
-                                    1. <strong>Keep 50 Hz</strong> or grid fails<br/>
-                                    2. <strong>Dispatch cheapest bids</strong> first<br/>
-                                    3. <strong>Minimize total cost</strong> = best score<br/>
+                                    1. <strong>Keep 50 Hz</strong> or grid fails<br />
+                                    2. <strong>Dispatch cheapest bids</strong> first<br />
+                                    3. <strong>Minimize total cost</strong> = best score<br />
                                     💡 Win by efficiency: accept bids that solve imbalance at lowest cost
                                 </p>
                             </div>

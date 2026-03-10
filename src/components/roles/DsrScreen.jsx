@@ -231,7 +231,7 @@ export default function DsrScreen(props) {
                         <div style={{ fontSize: 8.5, color: "#f0455a", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⛔ Max Duration Hit. Curtailment bids disabled.</div>
                     )}
 
-<button data-testid="dsr-submit-bm" onClick={onSubmit} disabled={submitted || phase !== "BM" || reboundActive || (!isAvailableToCurtail && !isShort)} style={{ marginTop: 16, width: "100%", padding: "12px", background: submitted || phase !== "BM" || reboundActive || (!isAvailableToCurtail && !isShort) ? "#1a3045" : (isShort ? "#1de98b" : "#f5b222"), border: "none", borderRadius: 6, color: submitted || phase !== "BM" || reboundActive || (!isAvailableToCurtail && !isShort) ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: submitted || phase !== "BM" || reboundActive || (!isAvailableToCurtail && !isShort) ? "default" : "pointer" }}>
+                    <button data-testid="dsr-submit-bm" onClick={onSubmit} disabled={submitted || phase !== "BM" || reboundActive || (!isAvailableToCurtail && !isShort)} style={{ marginTop: 16, width: "100%", padding: "12px", background: submitted || phase !== "BM" || reboundActive || (!isAvailableToCurtail && !isShort) ? "#1a3045" : (isShort ? "#1de98b" : "#f5b222"), border: "none", borderRadius: 6, color: submitted || phase !== "BM" || reboundActive || (!isAvailableToCurtail && !isShort) ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: submitted || phase !== "BM" || reboundActive || (!isAvailableToCurtail && !isShort) ? "default" : "pointer" }}>
                         {phase !== "BM" ? "AWAITING BM PHASE..." : submitted ? "✓ BM BID SUBMITTED" : (isShort ? "VOLUNTARY EARLIER PAYBACK →" : "OFFER CURTAILMENT →")}
                     </button>
                 </>
@@ -254,6 +254,9 @@ export default function DsrScreen(props) {
     const sect4RealTime = (
         <div style={{ padding: 16, display: "flex", flexDirection: "column", height: "100%", background: "#050e16" }}>
             <h3 style={{ fontSize: 12, color: "#fff", marginBottom: 16, letterSpacing: 1 }}>4. REAL-TIME OPERATIONS & SETTLEMENT</h3>
+            <div style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16 }}>
+                KPI: <strong style={{ color: "#f5b222" }}>Revenue/MW Curtailed</strong>
+            </div>
 
             <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 8, padding: 16, marginBottom: 20, flex: 1, display: "flex", flexDirection: "column" }}>
 
@@ -304,7 +307,7 @@ export default function DsrScreen(props) {
 
             <Tip text="Revenue summary from Day-Ahead market and total pushed to your ledger. Hover for explanations.">
                 <div ref={revenueRef} style={{ background: "#08141f", border: "1px solid #1a3045", borderRadius: 8, padding: 12 }}>
-                    <div style={{ fontSize: 9, color: "#4d7a96", fontWeight: 700, textTransform: "uppercase", marginBottom: 12 }}>REVENUE BREAKDOWN</div>
+                    <div style={{ fontSize: 9, color: "#4d7a96", fontWeight: 700, textTransform: "uppercase", marginBottom: 12 }}>REVENUE BREAKDOWN (Revenue/MW Curtailed)</div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                         <Tip text="Revenue earned from your Day-Ahead bid.">
                             <div>

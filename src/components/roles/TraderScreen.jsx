@@ -383,6 +383,10 @@ export default function TraderScreen(props) {
     const right = (
         <div style={{ padding: 16, height: "100%", display: "flex", flexDirection: "column" }}>
             <h3 style={{ fontSize: 12, color: "#fff", marginBottom: 16, letterSpacing: 1 }}>TRADING DESK ANALYSIS</h3>
+            <div style={{ fontSize: 9, color: "#4d7a96", marginBottom: 4 }}>Risk-Adjusted Return</div>
+            <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 13, fontWeight: 800, color: unrealizedPnl >= 0 ? "#1de98b" : "#f0455a", marginBottom: 16 }}>
+                {unrealizedPnl >= 0 ? "+" : ""}£{f0(unrealizedPnl / Math.max(1, marginPct))}
+            </div>
 
             {/* DA-ID Spread Indicator */}
             <Panel style={{ marginBottom: 16 }}>
@@ -416,7 +420,7 @@ export default function TraderScreen(props) {
             {/* Position & MTM Log */}
             <Panel style={{ flex: 1, display: "flex", flexDirection: "column" }}>
                 <Tip text="How much your current position is worth if you closed it right now at ID prices.">
-                    <div style={{ fontSize: 10, color: "#4d7a96", fontWeight: 800, marginBottom: 12, textTransform: "uppercase", cursor: "help", borderBottom: "1px dashed #4d7a96", display: "inline-block" }}>Mark-to-Market P&L</div>
+                    <div style={{ fontSize: 10, color: "#4d7a96", fontWeight: 800, marginBottom: 12, textTransform: "uppercase", cursor: "help", borderBottom: "1px dashed #4d7a96", display: "inline-block" }}>Mark-to-Market (Risk-Adjusted Return)</div>
                 </Tip>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>

@@ -127,14 +127,23 @@ async function selectTab(page, tabLabel) {
 
 // Wait for a specific phase tab to be active (e.g., 'DAY-AHEAD', 'INTRADAY')
 async function waitForPhase(page, phaseLabel, timeout = 30000) {
-    // Check for the phase pill in SharedLayout or a button/tab that contains the text
+    const expectedPhaseMap = {
+        'DAY-AHEAD': 'DA',
+        'INTRADAY': 'ID',
+        'BALANCING': 'BM',
+        'SETTLED': 'SETTLED'
+    };
+    const expectedPhaseKey = expectedPhaseMap[phaseLabel] || phaseLabel;
+
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
-        const hasPhase = await page.evaluate((label) => {
-            // Check body text (handles most cases including the hidden <span> used for tests)
-            if (document.body.textContent.includes(label)) return true;
+        const hasPhase = await page.evaluate((expectedKey, label) => {
+            // 1. Strongest check: The actual React state exposed to window
+            if (window.gunState && window.gunState.phase === expectedKey) {
+                return true;
+            }
 
-            // Explicitly look for the phase pill by its visual text representation
+            // 2. Fallback: Explicitly look for the phase pill by its visual text representation
             const pills = Array.from(document.querySelectorAll('div, span'));
             if (pills.some(el => el.textContent.toUpperCase() === `📋 ${label.toUpperCase()}` ||
                 el.textContent.toUpperCase() === `🤝 ${label.toUpperCase()}` ||
@@ -142,8 +151,11 @@ async function waitForPhase(page, phaseLabel, timeout = 30000) {
                 return true;
             }
             return false;
-        }, phaseLabel);
-        if (hasPhase) return;
+        }, expectedPhaseKey, phaseLabel);
+
+        if (hasPhase) {
+            return;
+        }
         await sleep(500);
     }
     const htmlSnippet = await page.evaluate(() => document.body.textContent.slice(0, 300));
@@ -202,7 +214,7 @@ async function joinGame(page, cfg, retries = 2) {
         // Wait for network connection
         console.log(`[${name}] Waiting for network connection…`);
         await waitFor(page, () =>
-            document.body.textContent.includes('Network Connected') ||
+            document.body.textContent.includes('Online') ||
             document.body.textContent.includes('Join Session'),
             30000
         );
@@ -431,6 +443,23 @@ async function bessSubmitDA(page) { await selectTab(page, 'DAY-AHEAD'); await cl
 async function bessSubmitID(page) { await selectTab(page, 'INTRADAY'); await clickButton(page, 'BUY (Charge Battery)'); await fillNumber(page, 0, 20); await fillNumber(page, 1, 48); await clickButton(page, 'SUBMIT ID ORDER'); }
 async function bessSubmitBM(page) { await fillNumber(page, 0, 30); await fillNumber(page, 1, 65); await page.click('button[data-testid="bess-submit-bm"]'); await sleep(200); }
 
+/** Pause the game by clicking FREEZE on NESO page */
+async function pauseGame(page) {
+    try {
+        const hasFreezeBtn = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('button:not([disabled])'))
+                .some(b => b.textContent.includes('FREEZE') || b.textContent.includes('⏸'));
+        });
+        if (hasFreezeBtn) {
+            await clickButton(page, 'FREEZE', 10000);
+            await sleep(500);
+            console.log('  [CTRL] Game PAUSED');
+        }
+    } catch (e) {
+        console.warn(`  [CTRL] Pause failed: ${e.message}`);
+    }
+}
+
 // ─── Verification helpers ─────────────────────────────────────────────────
 async function getCurrentSP(page) {
     return page.evaluate(() => {
@@ -492,6 +521,14 @@ async function getPnL(page) {
 
                 await joinGame(pages[i], ROLES[i]);
                 pass(`Join: ${ROLES[i].name} (${ROLES[i].roleLabel})`);
+
+                // ── CRITICAL: Pause the game immediately to prevent auto-timer from cycling phases ──
+                if (i === 0) {
+                    console.log('\n─── Pausing Game to Control Phase Timing ───────────────────');
+                    await sleep(2000);
+                    await pauseGame(pages[0]);
+                    await sleep(2000); // Let pause propagate via GunDB to all clients
+                }
             } catch (e) {
                 fail(`Join: ${ROLES[i].name}`, e);
             }

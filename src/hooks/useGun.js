@@ -18,7 +18,7 @@ export function useGun() {
 export function useToasts() {
     const [toasts, setToasts] = useState([]);
     const add = useCallback(t => {
-        const id = Date.now();
+        const id = `toast_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
         setToasts(prev => [...prev.slice(-4), { ...t, id, exiting: false }]);
         setTimeout(() => {
             setToasts(prev => prev.map(x => x.id === id ? { ...x, exiting: true } : x));

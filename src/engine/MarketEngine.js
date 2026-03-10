@@ -211,7 +211,7 @@ export function marketForSp(sp, scenarioId = "NORMAL", injectedEvents = [], publ
     const approxCapacityGW = SYSTEM_PARAMS.baseDemandGW * 1.5; // rough estimate of total capacity
     const reserveMarginPct = ((approxCapacityGW - Math.abs(trueNIV) / 1000) / approxCapacityGW) * 100;
     if (reserveMarginPct < 5) { // LoLP > 5%
-        const lolpMultiplier = Math.max(1, (10 - reserveMarginPct) / 2); // scale up to 2.5x at 0% margin
+        const lolpMultiplier = Math.max(1, (10 - reserveMarginPct) / 2); // scale up to 5x at 0% margin
         actual.sbp = Math.min(SYSTEM_PARAMS.VoLL, actual.sbp * lolpMultiplier);
         actual.ssp = Math.max(0, actual.ssp / lolpMultiplier);
     }
@@ -378,70 +378,70 @@ export function clearDA(bids, market_forecast) {
     const accepted_bids = [];
 
     // Simple intersection: find price where supply >= demand
-    for (let i = 0; i < supplySteps.length; i += 2) {
+    for (let i = 1; i < supplySteps.length; i += 2) {
         const [supMW, supPrice] = supplySteps[i];
-        const demAtPrice = demandSteps.find(([demMW, demPrice]) => demPrice >= supPrice);
-        if (demAtPrice) {
-            const [demMW] = demAtPrice;
-            if (supMW <= demMW) {
-                cp = supPrice;
-                volume = supMW;
+        if (supMW === 0) continue;
+        const demandAtPrice = demands
+            .filter(d => +d.price >= supPrice)
+            .reduce((s, d) => s + +d.mw, 0);
+        if (demandAtPrice > 0 && supMW >= demandAtPrice) {
+            cp = supPrice;
+            volume = demandAtPrice;
 
-                // Accept offers up to this price with pro-rata allocation at marginal price
-                let accCum = 0;
-                const offersAtCp = offers.filter(o => +o.price < cp);
-                const marginalOffers = offers.filter(o => +o.price === cp);
-                const infraMarginalOfferVolume = offersAtCp.reduce((sum, o) => sum + +o.mw, 0);
-                const marginalVolumeNeeded = Math.max(0, volume - infraMarginalOfferVolume);
-                const marginalTotalVolume = marginalOffers.reduce((sum, o) => sum + +o.mw, 0);
+            // Accept offers up to this price with pro-rata allocation at marginal price
+            let accCum = 0;
+            const offersAtCp = offers.filter(o => +o.price < cp);
+            const marginalOffers = offers.filter(o => +o.price === cp);
+            const infraMarginalOfferVolume = offersAtCp.reduce((sum, o) => sum + +o.mw, 0);
+            const marginalVolumeNeeded = Math.max(0, volume - infraMarginalOfferVolume);
+            const marginalTotalVolume = marginalOffers.reduce((sum, o) => sum + +o.mw, 0);
 
-                // Accept all infra-marginal offers
-                for (const o of offersAtCp) {
-                    const accMW = +o.mw;
-                    accepted_bids.push({ ...o, mwAcc: accMW, revenue: accMW * cp * SP_DURATION_H });
-                    accCum += accMW;
-                }
-
-                // Pro-rata allocate marginal volume among offers at clearing price
-                if (marginalVolumeNeeded > 0 && marginalTotalVolume > 0) {
-                    for (const o of marginalOffers) {
-                        const proRataShare = (+o.mw / marginalTotalVolume) * marginalVolumeNeeded;
-                        const accMW = Math.min(+o.mw, proRataShare);
-                        if (accMW > 0) {
-                            accepted_bids.push({ ...o, mwAcc: accMW, revenue: accMW * cp * SP_DURATION_H });
-                            accCum += accMW;
-                        }
-                    }
-                }
-
-                // Accept bids down to this price with pro-rata allocation at marginal price
-                accCum = 0;
-                const demandsAtCp = demands.filter(d => +d.price > cp);
-                const marginalDemands = demands.filter(d => +d.price === cp);
-                const infraMarginalDemandVolume = demandsAtCp.reduce((sum, d) => sum + +d.mw, 0);
-                const demandMarginalVolumeNeeded = Math.max(0, volume - infraMarginalDemandVolume);
-                const demandMarginalTotalVolume = marginalDemands.reduce((sum, d) => sum + +d.mw, 0);
-
-                // Accept all infra-marginal demands
-                for (const d of demandsAtCp) {
-                    const accMW = +d.mw;
-                    accepted_bids.push({ ...d, mwAcc: accMW, revenue: -(accMW * cp * SP_DURATION_H) });
-                    accCum += accMW;
-                }
-
-                // Pro-rata allocate marginal volume among demands at clearing price
-                if (demandMarginalVolumeNeeded > 0 && demandMarginalTotalVolume > 0) {
-                    for (const d of marginalDemands) {
-                        const proRataShare = (+d.mw / demandMarginalTotalVolume) * demandMarginalVolumeNeeded;
-                        const accMW = Math.min(+d.mw, proRataShare);
-                        if (accMW > 0) {
-                            accepted_bids.push({ ...d, mwAcc: accMW, revenue: -(accMW * cp * SP_DURATION_H) });
-                            accCum += accMW;
-                        }
-                    }
-                }
-                break;
+            // Accept all infra-marginal offers
+            for (const o of offersAtCp) {
+                const accMW = +o.mw;
+                accepted_bids.push({ ...o, mwAcc: accMW, revenue: accMW * cp * SP_DURATION_H });
+                accCum += accMW;
             }
+
+            // Pro-rata allocate marginal volume among offers at clearing price
+            if (marginalVolumeNeeded > 0 && marginalTotalVolume > 0) {
+                for (const o of marginalOffers) {
+                    const proRataShare = (+o.mw / marginalTotalVolume) * marginalVolumeNeeded;
+                    const accMW = Math.min(+o.mw, proRataShare);
+                    if (accMW > 0) {
+                        accepted_bids.push({ ...o, mwAcc: accMW, revenue: accMW * cp * SP_DURATION_H });
+                        accCum += accMW;
+                    }
+                }
+            }
+
+            // Accept bids down to this price with pro-rata allocation at marginal price
+            accCum = 0;
+            const demandsAtCp = demands.filter(d => +d.price > cp);
+            const marginalDemands = demands.filter(d => +d.price === cp);
+            const infraMarginalDemandVolume = demandsAtCp.reduce((sum, d) => sum + +d.mw, 0);
+            const demandMarginalVolumeNeeded = Math.max(0, volume - infraMarginalDemandVolume);
+            const demandMarginalTotalVolume = marginalDemands.reduce((sum, d) => sum + +d.mw, 0);
+
+            // Accept all infra-marginal demands
+            for (const d of demandsAtCp) {
+                const accMW = +d.mw;
+                accepted_bids.push({ ...d, mwAcc: accMW, revenue: -(accMW * cp * SP_DURATION_H) });
+                accCum += accMW;
+            }
+
+            // Pro-rata allocate marginal volume among demands at clearing price
+            if (demandMarginalVolumeNeeded > 0 && demandMarginalTotalVolume > 0) {
+                for (const d of marginalDemands) {
+                    const proRataShare = (+d.mw / demandMarginalTotalVolume) * demandMarginalVolumeNeeded;
+                    const accMW = Math.min(+d.mw, proRataShare);
+                    if (accMW > 0) {
+                        accepted_bids.push({ ...d, mwAcc: accMW, revenue: -(accMW * cp * SP_DURATION_H) });
+                        accCum += accMW;
+                    }
+                }
+            }
+            break;
         }
     }
 
@@ -458,7 +458,8 @@ export function feedbackMarketState(market, clearResult) {
 
     // Dynamic Frequency based on residual NIV
     const freqDeviation = clamp(-residualNIV / 190000, -0.4, 0.4);
-    const freq = clamp(50 + freqDeviation * (0.5 + Math.random() * 1.0), 49.3, 50.7);
+    const freqRng = rng((market.sp || 1) * 42 + 7);
+    const freq = clamp(50 + freqDeviation * (0.5 + freqRng() * 1.0), 49.3, 50.7);
 
     // Clearing-derived SBP/SSP
     let sbp, ssp;

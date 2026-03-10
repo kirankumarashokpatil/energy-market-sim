@@ -219,7 +219,7 @@ const MarketDataPanel = ({ bmMw, mip, fpnTotal, playerList, settledSps, sp, sbpH
     );
 };
 
-    const ImbalanceEnginePanel = ({ rowsForSp, playerList, activeRun, selectedPlayerId, setSelectedPlayerId, sp, sbp, ssp, niv, totalImbal, totalCharge, totalCleared, C, S }) => {
+const ImbalanceEnginePanel = ({ rowsForSp, playerList, activeRun, selectedPlayerId, setSelectedPlayerId, sp, sbp, ssp, niv, totalImbal, totalCharge, totalCleared, C, S }) => {
     const waterfallRefs = useRef({});
 
     useEffect(() => {
@@ -257,7 +257,7 @@ const MarketDataPanel = ({ bmMw, mip, fpnTotal, playerList, settledSps, sp, sbpH
                             {/* Aggregate System Imbalance Metrics - Elevated to Top */}
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
                                 <div style={{ ...S.panel, padding: "10px 12px" }}>
-                                    <div style={{ fontSize: 9, color: C.sub, marginBottom: 4, fontWeight: 600 }}>TOTAL SYSTEM IMBALANCE</div>
+                                    <div style={{ fontSize: 9, color: C.sub, marginBottom: 4, fontWeight: 600 }}>NET SYSTEM IMBALANCE</div>
                                     <div style={{ fontSize: 18, fontWeight: 900, color: totalImbal > 0 ? C.blue : totalImbal < 0 ? C.red : C.sub, ...S.mono }}>
                                         {totalImbal > 0 ? "+" : ""}{f0(totalImbal)} MW
                                     </div>

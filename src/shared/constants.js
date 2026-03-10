@@ -388,8 +388,8 @@ export const SCORING_CONFIG = {
         primaryWeight: 0.75,
     },
     SUPPLIER: {
-        // Inverted: lower cost = higher score (breakpoints sorted descending by input)
-        breakpoints: [[100, 10], [80, 40], [65, 60], [50, 80], [40, 100]],
+        // Inverted: lower cost = higher score (breakpoints sorted ascending by input)
+        breakpoints: [[40, 100], [50, 80], [65, 60], [80, 40], [100, 10]],
         primaryWeight: 0.80,
     },
     DSR: {

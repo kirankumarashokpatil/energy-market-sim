@@ -150,11 +150,17 @@ export default function App() {
     pendingReboundMwh: 0,
   });
 
-  const refs = useRef({}); refs.current = { sp, phase, phaseStartTs, soc, cash, daCash, submitted, pid, name, room, asset, assetConfig, isInstructor, scenarioId: roomScenario, gameMode, role, contractPosition, orderBookSnap: orderBook, daOrderBookSnap: daOrderBook, idOrderBookSnap: idOrderBook, spContracts, players, physicalState, msLeft, tickSpeed };
+  const refs = useRef({}); refs.current = { sp, phase, phaseStartTs, soc, cash, daCash, imbalancePenalty, submitted, pid, name, room, asset, assetConfig, isInstructor, scenarioId: roomScenario, gameMode, role, contractPosition, orderBookSnap: orderBook, daOrderBookSnap: daOrderBook, idOrderBookSnap: idOrderBook, spContracts, players, physicalState, msLeft, tickSpeed };
   const prevPhaseRef = useRef({ phase: "INIT", sp: 0 });
   const lastEventRef = useRef(null);
   const gmCfg = GAME_MODES[gameMode] || GAME_MODES.FULL;
   const isForgive = gmCfg.forgiveness;
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.gunState = { phase };
+    }
+  }, [phase]);
 
   const handleJoin = useCallback(async (chosenAsset, customConfig = null) => {
     if (!name.trim() || !room.trim() || !chosenAsset || !gun.current) return;
@@ -410,7 +416,7 @@ export default function App() {
         for (const [pid, trade] of Object.entries(playerTrades)) {
           if (!next[old.sp][pid]) next[old.sp][pid] = {};
           next[old.sp][pid].idMw = trade.mw;
-          next[old.sp][pid].idPrice = trade.money / trade.mw;
+          next[old.sp][pid].idPrice = trade.mw > 0 ? trade.money / trade.mw : 0;
           next[old.sp][pid].idSide = trade.side;
         }
         return next;
@@ -477,7 +483,12 @@ export default function App() {
         setSpContracts(prev => {
           const next = { ...prev };
           if (!next[settleSp]) next[settleSp] = {};
-          Object.values(refs.current.players || {}).forEach(p => {
+
+          let totalImbCash = 0;
+          let numPlayers = 0;
+          const playersArr = Object.values(refs.current.players || {});
+
+          playersArr.forEach(p => {
             const c = next[settleSp][p.id] || {};
             const pDaRev = c.daMw ? (c.daSide === "offer" ? c.daMw * c.daPrice * SP_DURATION_H : -c.daMw * c.daPrice * SP_DURATION_H) : 0;
             const pIdRev = c.idMw ? (c.idSide === "offer" ? c.idMw * c.idPrice * SP_DURATION_H : -c.idMw * c.idPrice * SP_DURATION_H) : 0;
@@ -519,37 +530,32 @@ export default function App() {
               totalCash: pDaRev + pIdRev + pBmRev + imbCash + operatingCost + startupCost,
             };
             next[settleSp][p.id] = c;
+            totalImbCash += imbCash;
+            numPlayers++;
           });
-          return next;
-        });
 
-        // Calculate BSUoS socialization
-        const settlements = Object.values(refs.current.spContracts[settleSp] || {});
-        const totalImbCash = settlements.reduce((sum, c) => sum + (c.settlement?.imbCash || 0), 0);
-        const numPlayers = settlements.length;
-        const bsuoSCharge = -totalImbCash / numPlayers;
+          // Calculate BSUoS socialization and apply in same pass
+          const bsuoSCharge = numPlayers > 0 ? -totalImbCash / numPlayers : 0;
 
-        // Update spContracts with BSUoS
-        setSpContracts(prev => {
-          const next = { ...prev };
           Object.keys(next[settleSp] || {}).forEach(pid => {
             if (next[settleSp][pid]?.settlement) {
               next[settleSp][pid].settlement.bsuoSCharge = bsuoSCharge;
               next[settleSp][pid].settlement.totalCash += bsuoSCharge;
             }
           });
+
           return next;
         });
 
         // Apply local results for current user
-        const myC = refs.current.spContracts[sp]?.[id] || {};
+        const myC = refs.current.spContracts[settleSp]?.[id] || {};
         const daRev = myC.daMw ? (myC.daSide === "offer" ? myC.daMw * myC.daPrice * SP_DURATION_H : -myC.daMw * myC.daPrice * SP_DURATION_H) : 0;
         const idRev = myC.idMw ? (myC.idSide === "offer" ? myC.idMw * myC.idPrice * SP_DURATION_H : -myC.idMw * myC.idPrice * SP_DURATION_H) : 0;
         const bmRev = myC.bmAccepted?.rev || 0;
 
         const myDef = { ...ASSETS[ak], ...(refs.current.assetConfig || {}) };
         const contractPosMw = refs.current.contractPosition;
-        const actualPosMw = myC.bmAccepted ? (market.actual.isShort ? myC.bmAccepted.mw : -myC.bmAccepted.mw) : 0;
+        const actualPosMw = myC.bmAccepted ? (settledMarket.actual.isShort ? myC.bmAccepted.mw : -myC.bmAccepted.mw) : 0;
 
         const intendedPhysical = contractPosMw + actualPosMw;
         let actualPhysical = intendedPhysical;
@@ -713,9 +719,9 @@ export default function App() {
         // Store physical state at end of settlement for next SP's startup cost determination
         setSpContracts(prev => {
           const next = { ...prev };
-          if (!next[sp]) next[sp] = {};
-          if (!next[sp][id]) next[sp][id] = {};
-          next[sp][id].physicalAtEndOfSp = { status: pState.status, currentMw: pState.currentMw };
+          if (!next[settleSp]) next[settleSp] = {};
+          if (!next[settleSp][id]) next[settleSp][id] = {};
+          next[settleSp][id].physicalAtEndOfSp = { status: pState.status, currentMw: pState.currentMw };
           return next;
         });
 
@@ -1008,7 +1014,8 @@ export default function App() {
     };
 
     switch (role) {
-      case "NESO": return <NESOScreen {...commonProps} />;
+      case "NESO":
+      case "instructor": return <NESOScreen {...commonProps} />;
       case "ELEXON": return <ElexonScreen {...commonProps} />;
       case "GENERATOR": return <GeneratorScreen {...commonProps} />;
       case "BESS": return <BessScreen {...commonProps} />;
