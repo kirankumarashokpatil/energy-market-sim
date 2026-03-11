@@ -9,10 +9,12 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest",
+    "start": "node server.cjs",
     "bots": "node bot_players.js",
     "relay": "node gun-relay.cjs",
     "test:e2e": "node test/e2e/gridforge-comprehensive.test.cjs",
-    "test:e2e:multiplayer": "node test/e2e/full-multiplayer.test.cjs"
+    "test:e2e:multiplayer": "node test/e2e/full-multiplayer.test.cjs",
+    "test:e2e:waitingroom": "node test/e2e/waiting-room-flow.test.cjs"
   },
   "dependencies": {
     "express": "^4.22.1",

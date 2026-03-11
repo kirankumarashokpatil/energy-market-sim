@@ -3,6 +3,8 @@ import SharedLayout from './SharedLayout';
 import { SUPPLIERS, SP_DURATION_H } from '../../shared/constants';
 import { Tip } from '../shared/Tip';
 import MarketOverviewPanel from '../shared/MarketOverviewPanel';
+import DAResultsTable from '../shared/DAResultsTable';
+import DACurveSubmission from '../DACurveSubmission';
 
 const f0 = p => Number(p).toLocaleString(undefined, { maximumFractionDigits: 0 });
 const f1 = p => Number(p).toLocaleString(undefined, { maximumFractionDigits: 1 });
@@ -35,8 +37,11 @@ export default function SupplierScreen(props) {
         daMyBid, setDaMyBid, daSubmitted, onDaSubmit,
         idMyOrder, setIdMyOrder, idSubmitted, onIdSubmit,
         spContracts, pid, contractPosition,
-        daOrderBook, daResult, idOrderBook, bmOrderBook, simRes, currentSp
+        daOrderBook, daResult, idOrderBook, bmOrderBook, simRes, currentSp,
+        positions, daPositions, daAuctionResults, daCurveSegments, onDaCurveSubmit, forecasts
     } = props;
+    const daAlreadyCleared = daAuctionResults && daAuctionResults.prices && daAuctionResults.prices.length > 0;
+    const [useAdvancedMode, setUseAdvancedMode] = useState(false); // Advanced curve mode for suppliers
 
     // Allow player to pick a supplier profile (defaults to BRITISH_GAS)
     const [supplierKey, setSupplierKey] = useState(assetKey && SUPPLIERS[assetKey] ? assetKey : "BRITISH_GAS");
@@ -274,29 +279,79 @@ export default function SupplierScreen(props) {
 
             {isDa && (
                 <>
-                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.5 }}>Buy baseload to cover your forecast demand of <b>{f0(baseDemandMw)} MW</b>. Actual demand will deviate by ±{f1(sup.forecastErrorPct * 100)}%. Under-hedging is extremely risky if SBP spikes.</p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: "auto" }}>
-                        <div>
-                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>BUY VOLUME (MW)</label>
-                            <input type="number" placeholder={f0(baseDemandMw)} value={daMyBid.mw} disabled={daSubmitted || !isDa} onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value, side: "buy" }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>MAX PRICE £/MWh</label>
-                            <input type="number" value={daMyBid.price} disabled={daSubmitted || !isDa} onChange={e => setDaMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#f5b222", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
-                        </div>
-                    </div>
-                    {daMyBid.mw && daMyBid.mw < baseDemandMw * 0.9 && (
-                        <div style={{ fontSize: 8.5, color: "#f0455a", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Under-hedging! You're only buying {f1((daMyBid.mw / baseDemandMw) * 100)}% of your forecast demand.</div>
+                    {daAlreadyCleared ? (
+                        <DAResultsTable
+                            daAuctionResults={daAuctionResults}
+                            daPositions={daPositions}
+                            positions={positions}
+                            pid={pid}
+                            currentSp={sp}
+                        />
+                    ) : (
+                        <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                <p style={{ fontSize: 9, color: "#4d7a96", lineHeight: 1.5, margin: 0, flex: 1 }}>Buy baseload to cover your forecast demand of <b>{f0(baseDemandMw)} MW</b>. Actual demand will deviate by ±{f1(sup.forecastErrorPct * 100)}%. Under-hedging is extremely risky if SBP spikes.</p>
+                                <button onClick={() => setUseAdvancedMode(m => !m)} style={{ padding: '3px 8px', background: '#0c1c2a', border: '1px solid #1a3045', borderRadius: 4, color: '#4d7a96', fontSize: 8, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                    {useAdvancedMode ? 'Simple Mode' : 'Advanced Mode'}
+                                </button>
+                            </div>
+                            {useAdvancedMode ? (
+                                <DACurveSubmission
+                                    onSubmit={onDaCurveSubmit}
+                                    forecastPrices={(forecasts || []).map(f => f?.price || 55)}
+                                    initialSegments={daCurveSegments || undefined}
+                                    assetMaxMW={sup.portfolioMw || 1000}
+                                    daSubmitted={daSubmitted}
+                                />
+                            ) : (
+                                <>
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: "auto" }}>
+                                        <div>
+                                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>BUY VOLUME (MW)</label>
+                                            <input type="number" placeholder={f0(baseDemandMw)} value={daMyBid.mw} disabled={!isDa} onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value, side: "buy" }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>MAX PRICE £/MWh</label>
+                                            <input type="number" value={daMyBid.price} disabled={!isDa} onChange={e => setDaMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#f5b222", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                        </div>
+                                    </div>
+                                    {daMyBid.mw && daMyBid.mw < baseDemandMw * 0.9 && (
+                                        <div style={{ fontSize: 8.5, color: "#f0455a", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Under-hedging! You're only buying {f1((daMyBid.mw / baseDemandMw) * 100)}% of your forecast demand.</div>
+                                    )}
+                                    <button data-testid="sup-submit-da" onClick={() => { setDaMyBid(b => ({ ...b, side: "buy" })); onDaSubmit(); }} disabled={!isDa || !daMyBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: !isDa ? "#1a3045" : "#f5b222", border: "none", borderRadius: 6, color: !isDa ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: !isDa ? "default" : "pointer" }}>
+                                        {!isDa ? "AWAITING DA PHASE..." : daSubmitted ? "UPDATE DA PURCHASE →" : "SUBMIT DA PURCHASE →"}
+                                    </button>
+                                </>
+                            )}
+                        </>
                     )}
-                    <button data-testid="sup-submit-da" onClick={() => { setDaMyBid(b => ({ ...b, side: "buy" })); onDaSubmit(); }} disabled={daSubmitted || !isDa || !daMyBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: daSubmitted || !isDa ? "#1a3045" : "#f5b222", border: "none", borderRadius: 6, color: daSubmitted || !isDa ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: daSubmitted || !isDa ? "default" : "pointer" }}>
-                        {!isDa ? "AWAITING DA PHASE..." : daSubmitted ? "✓ PURCHASE LOCKED" : "SUBMIT DA PURCHASE →"}
-                    </button>
                 </>
             )}
 
             {isId && (
                 <>
-                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.5 }}>Adjust your position closer to delivery. Weather changed? Hedge gap discovered? Fix it now before BM.</p>
+                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 8, lineHeight: 1.5 }}>Adjust your position closer to delivery. Weather changed? Hedge gap discovered? Fix it now before BM.</p>
+                    {/* Position & hedge banner */}
+                    {(() => {
+                        const daPurchase = Math.abs(daPositions?.[sp - 1] || 0);
+                        const hedgeGap = Math.max(0, baseDemandMw - Math.abs(contractPosition));
+                        return (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
+                                <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>DA PURCHASE</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: "#f5b222" }}>{f0(daPurchase)}MW</div>
+                                </div>
+                                <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>FORECAST DEMAND</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: "#ddeeff" }}>{f0(baseDemandMw)}MW</div>
+                                </div>
+                                <div style={{ background: hedgeGap > 0 ? "#f0455a11" : "#1de98b11", border: `1px solid ${hedgeGap > 0 ? "#f0455a33" : "#1de98b33"}`, borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>HEDGE GAP</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: hedgeGap > 0 ? "#f0455a" : "#1de98b" }}>{hedgeGap > 0 ? `${f0(hedgeGap)}MW` : "HEDGED"}</div>
+                                </div>
+                            </div>
+                        );
+                    })()}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
                         <button onClick={() => setIdMyOrder(b => ({ ...b, side: "buy" }))} disabled={idSubmitted} style={{ padding: "8px", background: idMyOrder.side === "buy" ? "#38c0fc22" : "#102332", border: `1px solid ${idMyOrder.side === "buy" ? "#38c0fc" : "#1a3045"}`, borderRadius: 6, color: idMyOrder.side === "buy" ? "#38c0fc" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>BUY MORE (Under-hedged)</button>
                         <button onClick={() => setIdMyOrder(b => ({ ...b, side: "sell" }))} disabled={idSubmitted} style={{ padding: "8px", background: idMyOrder.side === "sell" ? "#f0455a22" : "#102332", border: `1px solid ${idMyOrder.side === "sell" ? "#f0455a" : "#1a3045"}`, borderRadius: 6, color: idMyOrder.side === "sell" ? "#f0455a" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>SELL EXCESS (Over-hedged)</button>

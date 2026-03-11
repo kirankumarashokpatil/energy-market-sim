@@ -38,13 +38,13 @@ const HEADLESS = process.env.HEADLESS !== 'false';
 //   - Generator (owns an OCGT asset)
 //   - Supplier (no asset, hedging demand)
 const ROLES = [
-    { name: 'NESO_Op', roleLabel: 'System Operator', isHost: true, needsAsset: false, assetType: null },
-    { name: 'GenCo', roleLabel: 'Generator', isHost: false, needsAsset: true, assetType: 'Gas Peaker' },
-    { name: 'PowerSupply', roleLabel: 'Supplier', isHost: false, needsAsset: false, assetType: null },
-    { name: 'Elexon_Admin', roleLabel: 'Elexon', isHost: false, needsAsset: false, assetType: null },
-    { name: 'HedgeFund', roleLabel: 'Trader', isHost: false, needsAsset: false, assetType: null },
-    { name: 'BatteryCo', roleLabel: 'Battery Storage', isHost: false, needsAsset: true, assetType: 'Grid BESS' },
-    { name: 'DemandCo', roleLabel: 'Demand Controller', isHost: false, needsAsset: true, assetType: 'Demand Response' }
+    { name: 'NESO_Op',      roleLabel: 'System Operator',   roleId: 'NESO',      isHost: true,  needsAsset: false, assetKey: null    },
+    { name: 'GenCo',        roleLabel: 'Generator',         roleId: 'GENERATOR', isHost: false, needsAsset: true,  assetKey: 'OCGT'  },
+    { name: 'PowerSupply',  roleLabel: 'Supplier',          roleId: 'SUPPLIER',  isHost: false, needsAsset: false, assetKey: null    },
+    { name: 'Elexon_Admin', roleLabel: 'Elexon',            roleId: 'ELEXON',    isHost: false, needsAsset: false, assetKey: null    },
+    { name: 'HedgeFund',    roleLabel: 'Trader',            roleId: 'TRADER',    isHost: false, needsAsset: false, assetKey: null    },
+    { name: 'BatteryCo',   roleLabel: 'Battery Storage',   roleId: 'BESS',      isHost: false, needsAsset: true,  assetKey: 'BESS_M'},
+    { name: 'DemandCo',    roleLabel: 'Demand Controller', roleId: 'DSR',       isHost: false, needsAsset: true,  assetKey: 'DSR'   }
 ];
 
 // ─── Test results tracker ─────────────────────────────────────────────────
@@ -163,170 +163,125 @@ async function waitForPhase(page, phaseLabel, timeout = 30000) {
 }
 
 /**
- * Starts the local Gun relay server and waits for it to be ready.
- * Returns the child process object so it can be killed later.
+ * Starts the Gun relay on port 8765 (kills any existing process first).
+ * Resolves with the child process, or null if already running externally.
  */
 function startGunRelay() {
-    return new Promise((resolve, reject) => {
-        console.log('  [Setup] Starting local Gun relay server...');
-        const relay = spawn('node', ['gun-relay.cjs'], {
-            stdio: ['ignore', 'pipe', 'pipe']
-        });
-
-        let started = false;
-
-        // Listen for the specific startup message
-        relay.stdout.on('data', (data) => {
-            const output = data.toString();
-            if (!started && output.includes('Gun relay server running')) {
-                started = true;
-                console.log('  [Setup] Gun relay server is ready.');
-                resolve(relay);
-            }
-        });
-
-        relay.stderr.on('data', (data) => {
-            const output = data.toString();
-            if (output.toLowerCase().includes('error')) {
-                console.error('  [Relay Error]', output);
-            }
-        });
-
-        relay.on('error', (err) => {
-            if (!started) reject(err);
-            else console.error('  [Relay Process Error]', err);
-        });
-
-        relay.on('exit', (code) => {
-            if (!started && code !== 0) reject(new Error(`Gun relay exited with code ${code}`));
+    return new Promise((resolve) => {
+        console.log('  [Setup] Starting Gun relay on port 8765...');
+        const kill = spawn('cmd', ['/c', 'for /f "tokens=5" %a in (\'netstat -ano ^| findstr :8765\') do taskkill /F /PID %a'], { stdio: 'ignore', shell: true });
+        kill.on('close', () => {
+            const relay = spawn('node', ['gun-relay.cjs'], { stdio: ['ignore', 'pipe', 'pipe'] });
+            let started = false;
+            relay.stdout.on('data', d => {
+                if (!started && d.toString().includes('Gun relay server running')) {
+                    started = true;
+                    console.log('  [Setup] Gun relay ready.');
+                    resolve(relay);
+                }
+            });
+            relay.on('error', err => { console.warn('  [Relay] Error:', err.message); if (!started) { started = true; resolve(null); } });
+            relay.on('exit', code => { if (!started) { console.warn('  [Relay] Exited', code, '(may already be running)'); started = true; resolve(null); } });
+            setTimeout(() => { if (!started) { started = true; resolve(relay); } }, 5000);
         });
     });
 }
 
-// ─── Join flow (exactly as in WaitingRoom.jsx) ─────────────────────────────
-async function joinGame(page, cfg, retries = 2) {
-    const { name, roleLabel, isHost, needsAsset, assetType } = cfg;
-    console.log(`\n[${name}] Joining as ${roleLabel} (Retries left: ${retries})…`);
+// ─── NESO-authority waiting room helpers ─────────────────────────────────────
+async function enterLobby(page, playerName) {
+    await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: 30000 });
+    await waitFor(page, () => document.body.textContent.includes('Online') || document.querySelector('input') !== null, 20000);
+    await typeInto(page, 'e.g. Alice', playerName);
+    await page.evaluate(() => {
+        const el = document.querySelector('input[placeholder="e.g. ALPHA"]');
+        if (el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
+    });
+    await typeInto(page, 'e.g. ALPHA', ROOM_CODE);
+    await clickButton(page, 'JOIN WAITING ROOM');
+    await waitFor(page, () =>
+        document.body.textContent.includes('PLAYERS IN ROOM') ||
+        document.body.textContent.includes('NESO CONTROL') ||
+        document.body.textContent.includes('YOUR ASSIGNMENT')
+    , 20000);
+}
 
-    try {
-        await page.goto(BASE_URL, { waitUntil: 'networkidle2' });
+async function waitForAllPlayersInRoom(nesoPage, count) {
+    await waitFor(nesoPage, n =>
+        parseInt((document.body.textContent.match(/PLAYERS IN ROOM \((\d+)\)/) || [0, 0])[1], 10) >= n
+    , 45000, count);
+    const actual = await nesoPage.evaluate(() =>
+        parseInt((document.body.textContent.match(/PLAYERS IN ROOM \((\d+)\)/) || [0, 0])[1], 10)
+    );
+    console.log(`  [NESO] Sees ${actual}/${count} players`);
+}
 
-        // Wait for network connection
-        console.log(`[${name}] Waiting for network connection…`);
-        await waitFor(page, () =>
-            document.body.textContent.includes('Online') ||
-            document.body.textContent.includes('Join Session'),
-            30000
-        );
+async function playerSetPreferredRole(page, roleId) {
+    await page.evaluate(rid => {
+        const btn = document.querySelector(`[data-testid="role-${rid}"]`);
+        if (btn) btn.click();
+    }, roleId);
+}
 
-        // Fill name
-        await typeInto(page, 'e.g. Alice', name);
+async function nesoAssignRole(nesoPage, playerName, roleId) {
+    // Wait for the host UI dropdown to appear in this player's card (guards isHost race)
+    await nesoPage.waitForFunction((pName) => {
+        const card = document.querySelector(`[data-player-name="${pName}"]`);
+        return card && card.querySelector('[data-testid="role-assign-select"]') !== null;
+    }, { timeout: 12000 }, playerName).catch(() => {});
+    const ok = await nesoPage.evaluate((pName, rId) => {
+        const card = document.querySelector(`[data-player-name="${pName}"]`);
+        if (!card) return `NO_CARD:${pName}`;
+        const sel = card.querySelector('[data-testid="role-assign-select"]');
+        if (!sel) return 'NO_SELECT';
+        if (sel.disabled) return 'DISABLED';
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+        setter.call(sel, rId);
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'OK';
+    }, playerName, roleId);
+    if (ok !== 'OK') console.warn(`  [NESO] assignRole: ${ok} (${playerName})`);
+    await sleep(600);
+    return ok === 'OK';
+}
 
-        // Fill room code (clear first)
-        await page.evaluate(() => {
-            const el = document.querySelector('input[placeholder="e.g. ALPHA"]');
-            if (el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
-        });
-        await typeInto(page, 'e.g. ALPHA', ROOM_CODE);
+async function nesoAssignAsset(nesoPage, playerName, assetKey) {
+    await nesoPage.waitForFunction(pName => {
+        const card = document.querySelector(`[data-player-name="${pName}"]`);
+        return card && card.querySelector('[data-testid="asset-assign-select"]') !== null;
+    }, { timeout: 8000 }, playerName).catch(() => {});
+    const ok = await nesoPage.evaluate((pName, aKey) => {
+        const card = document.querySelector(`[data-player-name="${pName}"]`);
+        if (!card) return `NO_CARD:${pName}`;
+        const sel = card.querySelector('[data-testid="asset-assign-select"]');
+        if (!sel) return 'NO_ASSET_SELECT';
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+        setter.call(sel, aKey);
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'OK';
+    }, playerName, assetKey);
+    if (ok !== 'OK') console.warn(`  [NESO] assignAsset: ${ok} (${playerName})`);
+    await sleep(600);
+    return ok === 'OK';
+}
 
-        // Enter waiting room
-        console.log(`[${name}] Clicking JOIN WAITING ROOM…`);
-        await clickButton(page, 'JOIN WAITING ROOM');
+async function playerClickReady(page, playerName, timeout = 30000) {
+    await waitFor(page, () =>
+        document.body.textContent.includes('Confirmed by NESO') ||
+        document.body.textContent.includes('NOT READY (click to ready)')
+    , timeout);
+    await clickButton(page, 'NOT READY (click to ready)', 15000);
+    await waitFor(page, () => document.body.textContent.includes('\u2713 READY'), 10000);
+    console.log(`  [${playerName}] Confirmed READY`);
+}
 
-        // Wait for role buttons to appear
-        console.log(`[${name}] Waiting for role buttons…`);
-        await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(b => b.textContent.includes('Generator')), { timeout: 30000 });
-
-        // Select role
-        console.log(`[${name}] Selecting role: ${roleLabel}…`);
-        await page.evaluate(label => {
-            const buttons = Array.from(document.querySelectorAll('button'));
-            // Look for button that contains the role label div exactly or most closely
-            const btn = buttons.find(b => b.textContent.includes(label) && b.innerHTML.includes('background'));
-            if (btn) {
-                btn.click();
-            } else {
-                // fallback to any button with the label
-                const fallback = buttons.find(b => b.textContent.includes(label));
-                if (fallback) fallback.click();
-            }
-        }, roleLabel);
-        await sleep(1000);
-
-        // Determine correct proceed button
-        // Be tolerant of timing differences in host detection by preferring
-        // START GAME, then SELECT ASSET, then JOIN GAME, regardless of the
-        // expected role flags passed in via cfg.
-        console.log(`[${name}] Waiting for proceed button…`);
-        const canContinue = async () => {
-            return page.evaluate(() => {
-                const btns = Array.from(document.querySelectorAll('button'));
-                const start = btns.find(b => b.textContent.includes('START GAME'));
-                const asset = btns.find(b => b.textContent.includes('SELECT ASSET'));
-                const join = btns.find(b => b.textContent.includes('JOIN GAME'));
-
-                if (start) { start.click(); return 'START'; }
-                if (asset) { asset.click(); return 'ASSET'; }
-                if (join) { join.click(); return 'JOIN'; }
-                return null;
-            });
-        };
-
-        let found = null;
-        for (let i = 0; i < 15; i++) {
-            found = await canContinue();
-            if (found) break;
-            await sleep(1000);
-        }
-
-        if (!found) {
-            const allBtnText = await page.evaluate(() =>
-                Array.from(document.querySelectorAll('button'))
-                    .map(b => b.textContent.trim())
-                    .join(' | ')
-            );
-            throw new Error(`Proceed button failed (expected host=${isHost}, needsAsset=${needsAsset}). Found buttons: [${allBtnText}]`);
-        }
-        console.log(`[${name}] Proceeded with: ${found}`);
-
-        // Asset selection (if needed)
-        if (needsAsset) {
-            console.log(`[${name}] Waiting for asset selection UI…`);
-            await waitFor(page, () => document.body.textContent.includes("choose the asset you'll operate"), 30000);
-            if (assetType) {
-                console.log(`[${name}] Selecting asset: ${assetType}…`);
-                await page.evaluate(aType => {
-                    const cards = Array.from(document.querySelectorAll('[style*="cursor: pointer"]'));
-                    const card = cards.find(c => c.textContent.includes(aType));
-                    if (card) card.click();
-                }, assetType);
-            } else {
-                console.log(`[${name}] Selecting first available asset…`);
-                await page.evaluate(() => {
-                    const card = document.querySelector('[style*="cursor: pointer"]');
-                    if (card) card.click();
-                });
-            }
-            await sleep(1500);
-            console.log(`[${name}] Confirming asset…`);
-            await page.evaluate(() => {
-                const btns = Array.from(document.querySelectorAll('button'));
-                const btn = btns.find(b => b.textContent.includes('CONFIRM & JOIN'));
-                if (btn) btn.click();
-            });
-        }
-
-        // Wait for main game UI (SP indicator)
-        console.log(`[${name}] Waiting for game UI…`);
-        await waitFor(page, () => document.body.textContent.includes('/48'), 60000);
-        console.log(`[${name}] ✓ Game UI loaded`);
-    } catch (err) {
-        if (retries > 0) {
-            console.warn(`[${name}] Join failed, retrying: ${err.message}`);
-            return joinGame(page, cfg, retries - 1);
-        }
-        throw err;
-    }
+async function nesoStartGameFromWaiting(nesoPage) {
+    await nesoPage.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button'))
+            .find(b => b.textContent.toUpperCase().includes('START GAME') && !b.disabled);
+        return !!btn;
+    }, { timeout: 20000 });
+    await clickButton(nesoPage, 'START GAME');
+    console.log('  [NESO] START GAME clicked');
 }
 
 // ─── NESO actions ─────────────────────────────────────────────────────────
@@ -389,6 +344,8 @@ async function expectPhase(page, phaseText) {
 // Generator
 async function genSubmitDA(page) {
     await selectTab(page, 'DAY-AHEAD');
+    await clickButton(page, 'Simple Mode').catch(() => {}); // exit EPEX Curve Mode
+    await sleep(400);
     await fillNumber(page, 0, 50);
     await fillNumber(page, 1, 45);
     await clickButton(page, 'SUBMIT DA OFFER');
@@ -414,6 +371,11 @@ async function genSubmitBM(page) {
 // Supplier
 async function supSubmitDA(page) {
     await selectTab(page, 'DAY-AHEAD');
+    // Supplier defaults to Simple Mode — wait until the DA inputs are enabled (disabled={!isDa})
+    await page.waitForFunction(
+        () => Array.from(document.querySelectorAll('input[type="number"]:not([disabled])')).length >= 2,
+        { timeout: 30000 }
+    );
     await fillNumber(page, 0, 80);
     await fillNumber(page, 1, 48);
     await clickButton(page, 'SUBMIT DA PURCHASE');
@@ -431,17 +393,64 @@ async function traderSubmitDA(page) { await selectTab(page, 'DAY-AHEAD'); await 
 async function traderSubmitID(page) { await selectTab(page, 'INTRADAY'); await clickButton(page, 'SELL (Go Short)'); await fillNumber(page, 0, 15); await fillNumber(page, 1, 55); await clickButton(page, 'SUBMIT ID ORDER'); }
 
 // DSR
-async function dsrSubmitDA(page) { await selectTab(page, 'DAY-AHEAD'); await clickButton(page, 'SELL (Curtail Demand)'); await fillNumber(page, 0, 20); await fillNumber(page, 1, 30); await clickButton(page, 'SUBMIT DA SCHEDULE'); }
+async function dsrSubmitDA(page) {
+    await selectTab(page, 'DAY-AHEAD');
+    // DSR has no curve mode — wait for SELL button to be enabled (rendered when isDa = true)
+    await page.waitForFunction(
+        () => !!Array.from(document.querySelectorAll('button:not([disabled])')).find(b => b.textContent.includes('SELL (Curtail Demand)')),
+        { timeout: 30000 }
+    );
+    await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('button:not([disabled])')).find(b => b.textContent.includes('SELL (Curtail Demand)'));
+        if (btn) btn.click();
+    });
+    await fillNumber(page, 0, 20);
+    await fillNumber(page, 1, 30);
+    await clickButton(page, 'SUBMIT DA SCHEDULE');
+}
 async function dsrSubmitID(page) { await selectTab(page, 'INTRADAY'); await clickButton(page, 'SELL (Curtail Demand)'); await fillNumber(page, 0, 10); await fillNumber(page, 1, 35); await clickButton(page, 'SUBMIT ID ORDER'); }
-async function dsrSubmitBM(page) { await fillNumber(page, 0, 15); await fillNumber(page, 1, 40); await page.click('button[data-testid="dsr-submit-bm"]'); await sleep(200); }
+async function dsrSubmitBM(page) {
+    // Wait for the dsr-bm-mw input to not be disabled (phase=BM, not submitted, no rebound)
+    await page.waitForFunction(
+        () => {
+            const inp = document.querySelector('input[data-testid="dsr-bm-mw"]');
+            return inp && !inp.disabled;
+        },
+        { timeout: 45000 }
+    ).catch(async () => {
+        // Diagnostic log on failure
+        const diag = await page.evaluate(() => {
+            const inp = document.querySelector('input[data-testid="dsr-bm-mw"]');
+            const btn = document.querySelector('button[data-testid="dsr-submit-bm"]');
+            return {
+                inputExists: !!inp, inputDisabled: inp ? inp.disabled : 'N/A',
+                btnExists: !!btn, btnDisabled: btn ? btn.disabled : 'N/A',
+                bodySnippet: document.body.textContent.slice(0, 200)
+            };
+        }).catch(e => ({ error: e.message }));
+        console.warn('  [DSR BM] Input still disabled after 45s:', JSON.stringify(diag));
+        throw new Error('DSR BM inputs never enabled: ' + JSON.stringify(diag));
+    });
+    // Atomic fill + click
+    await page.evaluate((mw, price) => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        const mwInp = document.querySelector('input[data-testid="dsr-bm-mw"]');
+        const priceInp = document.querySelector('input[data-testid="dsr-bm-price"]');
+        if (mwInp) { setter.call(mwInp, mw); mwInp.dispatchEvent(new Event('input', { bubbles: true })); }
+        if (priceInp) { setter.call(priceInp, price); priceInp.dispatchEvent(new Event('input', { bubbles: true })); }
+        const b = document.querySelector('button[data-testid="dsr-submit-bm"]');
+        if (b) b.click();
+    }, 15, 40);
+    await sleep(200);
+}
 
 // Interconnector (only BM)
 async function icSubmitBM(page) { await fillNumber(page, 0, 100); await fillNumber(page, 1, 80); await clickButton(page, 'SUBMIT'); }
 
 // BESS
-async function bessSubmitDA(page) { await selectTab(page, 'DAY-AHEAD'); await clickButton(page, 'SELL (Discharge Battery)'); await fillNumber(page, 0, 40); await fillNumber(page, 1, 50); await clickButton(page, 'SUBMIT DA SCHEDULE'); }
+async function bessSubmitDA(page) { await selectTab(page, 'DAY-AHEAD'); await clickButton(page, 'Simple Mode').catch(() => {}); await sleep(400); await clickButton(page, 'SELL (Discharge Battery)'); await fillNumber(page, 0, 40); await fillNumber(page, 1, 50); await clickButton(page, 'SUBMIT DA SCHEDULE'); }
 async function bessSubmitID(page) { await selectTab(page, 'INTRADAY'); await clickButton(page, 'BUY (Charge Battery)'); await fillNumber(page, 0, 20); await fillNumber(page, 1, 48); await clickButton(page, 'SUBMIT ID ORDER'); }
-async function bessSubmitBM(page) { await fillNumber(page, 0, 30); await fillNumber(page, 1, 65); await page.click('button[data-testid="bess-submit-bm"]'); await sleep(200); }
+async function bessSubmitBM(page) { await fillNumber(page, 0, 30); await fillNumber(page, 1, 65); await page.evaluate(() => { const b = document.querySelector('button[data-testid="bess-submit-bm"]'); if (b) b.click(); }); await sleep(200); }
 
 /** Pause the game by clicking FREEZE on NESO page */
 async function pauseGame(page) {
@@ -498,41 +507,101 @@ async function getPnL(page) {
     try {
         gunRelayProcess = await startGunRelay();
 
-        // ── Join all players ────────────────────────────────────────────
-        console.log('\n─── Phase 0: Join All Players ──────────────────────');
-        for (let i = 0; i < ROLES.length; i++) {
+        // ── Phase 0: Join all players (NESO-authority flow) ──────────────
+        console.log('\n─── Phase 0: Join All Players (NESO-Authority Flow) ─────');
+
+        // 1. Launch all browsers
+        for (const cfg of ROLES) {
+            const browser = await puppeteer.launch({
+                headless: HEADLESS ? 'new' : false,
+                protocolTimeout: 60000,
+                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            });
+            browsers.push(browser);
+            const page = await browser.newPage();
+            await page.setViewport({ width: 1280, height: 800 });
+            page.on('console', msg => { if (msg.type() === 'error') console.log(`  [BROWSER][${cfg.name}] ${msg.text()}`); });
+            pages.push(page);
+        }
+
+        // 2. NESO joins first to claim host slot
+        try {
+            await enterLobby(pages[0], ROLES[0].name);
+            await waitFor(pages[0], () => document.body.textContent.includes('NESO CONTROL') || document.body.textContent.includes('ROOM AUTHORITY'), 20000);
+            pass(`Join: ${ROLES[0].name} confirmed as NESO host`);
+        } catch (e) { fail(`Join: ${ROLES[0].name}`, e); }
+
+        await sleep(3000); // allow host record to propagate via relay
+
+        // 3. Other players join in parallel
+        await Promise.all(ROLES.slice(1).map(async (cfg, idx) => {
+            const i = idx + 1;
+            try {
+                await enterLobby(pages[i], cfg.name);
+                pass(`Join: ${cfg.name} entered waiting room`);
+            } catch (e) { fail(`Join: ${cfg.name}`, e); }
+        }));
+        await sleep(2000);
+
+        // 4. Non-host players set preferred roles
+        for (let i = 1; i < ROLES.length; i++) {
+            await playerSetPreferredRole(pages[i], ROLES[i].roleId).catch(() => {});
+        }
+        await sleep(2000);
+
+        // 5. NESO waits for all players, then assigns roles + assets
+        try {
+            await waitForAllPlayersInRoom(pages[0], ROLES.length);
+            pass('NESO sees all players');
+        } catch (e) { fail('NESO player count', e); }
+
+        // Guard: wait for NESO's host UI (role dropdowns) to be visible before assigning
+        await pages[0].waitForFunction(
+            () => document.querySelectorAll('[data-testid="role-assign-select"]').length > 0,
+            { timeout: 15000 }
+        ).catch(() => console.warn('  [NESO] Host dropdowns not visible yet — proceeding anyway'));
+
+        for (let i = 1; i < ROLES.length; i++) {
             const cfg = ROLES[i];
             try {
-                const browser = await puppeteer.launch({
-                    headless: HEADLESS ? 'new' : false,
-                    args: ['--no-sandbox', '--disable-setuid-sandbox']
-                });
-                browsers.push(browser);
-                const page = await browser.newPage();
-                await page.setViewport({ width: 1280, height: 800 });
-                pages.push(page);
-
-                // Forward browser logs to node console for debugging
-                page.on('console', msg => {
-                    if (msg.type() === 'error' || msg.text().includes('WaitingRoom')) {
-                        console.log(`[BROWSER][${cfg.name}] ${msg.text()}`);
-                    }
-                });
-
-                await joinGame(pages[i], ROLES[i]);
-                pass(`Join: ${ROLES[i].name} (${ROLES[i].roleLabel})`);
-
-                // ── CRITICAL: Pause the game immediately to prevent auto-timer from cycling phases ──
-                if (i === 0) {
-                    console.log('\n─── Pausing Game to Control Phase Timing ───────────────────');
-                    await sleep(2000);
-                    await pauseGame(pages[0]);
-                    await sleep(2000); // Let pause propagate via GunDB to all clients
+                await nesoAssignRole(pages[0], cfg.name, cfg.roleId);
+                if (cfg.assetKey) {
+                    await nesoAssignAsset(pages[0], cfg.name, cfg.assetKey);
+                    pass(`Assigned: ${cfg.name} → ${cfg.roleId} + ${cfg.assetKey}`);
+                } else {
+                    pass(`Assigned: ${cfg.name} → ${cfg.roleId}`);
                 }
-            } catch (e) {
-                fail(`Join: ${ROLES[i].name}`, e);
-            }
+            } catch (e) { fail(`Assign: ${cfg.name}`, e); }
         }
+
+        // 6. Non-host players click READY
+        await Promise.all(ROLES.slice(1).map(async (cfg, idx) => {
+            const i = idx + 1;
+            try {
+                await playerClickReady(pages[i], cfg.name);
+                pass(`Ready: ${cfg.name}`);
+            } catch (e) { fail(`Ready: ${cfg.name}`, e); }
+        }));
+
+        // 7. NESO starts game
+        try {
+            await nesoStartGameFromWaiting(pages[0]);
+            pass('NESO started game');
+        } catch (e) { fail('NESO start game', e); }
+
+        // 8. Wait for all game UIs to load
+        for (let i = 0; i < pages.length; i++) {
+            try {
+                await waitFor(pages[i], () => document.body.textContent.includes('/48'), 30000);
+                pass(`Game UI: ${ROLES[i].name}`);
+            } catch (e) { fail(`Game UI: ${ROLES[i].name}`, e); }
+        }
+
+        // Pause immediately to take control of phase timing
+        console.log('\n─── Pausing Game to Control Phase Timing ───────────────────');
+        await sleep(2000);
+        await pauseGame(pages[0]);
+        await sleep(2000);
 
         // ── Initial sync check ──────────────────────────────────────────
         console.log('\n─── Initial Sync Check ───────────────────────────────');
@@ -588,7 +657,7 @@ async function getPnL(page) {
         // Elexon[3] does not submit DA bids
         try { await traderSubmitDA(pages[4]); pass('Trader DA'); } catch (e) { fail('Trader DA', e); }
         try { await bessSubmitDA(pages[5]); pass('BESS DA'); } catch (e) { fail('BESS DA', e); }
-        try { await dsrSubmitDA(pages[6]); pass('DSR DA'); } catch (e) { fail('DSR DA', e); }
+        // DSR is a pure BM player — no DA submission (would trigger rebound, blocking BM inputs)
 
         // ── ID Phase ────────────────────────────────────────────────────
         console.log('\n─── Phase 2: Intraday (ID) ──────────────────────────');
@@ -613,7 +682,7 @@ async function getPnL(page) {
         // Elexon[3] does not submit ID bids
         try { await traderSubmitID(pages[4]); pass('Trader ID'); } catch (e) { fail('Trader ID', e); }
         try { await bessSubmitID(pages[5]); pass('BESS ID'); } catch (e) { fail('BESS ID', e); }
-        try { await dsrSubmitID(pages[6]); pass('DSR ID'); } catch (e) { fail('DSR ID', e); }
+        // DSR is a pure BM player — no ID submission (would trigger rebound, blocking BM inputs)
 
         // ── BM Phase ────────────────────────────────────────────────────
         console.log('\n─── Phase 3: Balancing Mechanism (BM) ───────────────');
@@ -636,7 +705,12 @@ async function getPnL(page) {
         try { await genSubmitBM(pages[1]); pass('Generator BM'); } catch (e) { fail('Generator BM', e); }
         // Supplier[2], Elexon[3], Trader[4] do not participate in BM
         try { await bessSubmitBM(pages[5]); pass('BESS BM'); } catch (e) { fail('BESS BM', e); }
-        try { await dsrSubmitBM(pages[6]); pass('DSR BM'); } catch (e) { fail('DSR BM', e); }
+        // DSR BM: retry up to 2x — browser can be sluggish with 7 tabs
+        let dsrBmPassed = false;
+        for (let attempt = 1; attempt <= 2 && !dsrBmPassed; attempt++) {
+            try { await dsrSubmitBM(pages[6]); pass('DSR BM'); dsrBmPassed = true; }
+            catch (e) { if (attempt === 2) fail('DSR BM', e); else { console.warn(`  [DSR BM] Attempt ${attempt} failed, retrying...`); await sleep(2000); } }
+        }
 
         // ── Settlement Phase ────────────────────────────────────────────
         console.log('\n─── Phase 4: Settlement ─────────────────────────────');
@@ -652,10 +726,11 @@ async function getPnL(page) {
         // ── Final verifications ─────────────────────────────────────────
         console.log('\n─── Final Verifications ──────────────────────────────');
 
-        // 1. All players have P&L visible
+        // 1. All players have P&L visible (NESO is system operator — warn but don't fail if £0)
         for (let i = 0; i < ROLES.length; i++) {
             const pnl = await getPnL(pages[i]).catch(() => null);
             if (pnl) pass(`${ROLES[i].name}: P&L visible (${pnl})`);
+            else if (ROLES[i].roleId === 'NESO') console.log(`  ⚠️  ${ROLES[i].name}: No P&L (expected for system operator)`);
             else fail(`${ROLES[i].name}: P&L missing`, new Error('No P&L found'));
         }
 

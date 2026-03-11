@@ -175,7 +175,7 @@ export default function NESOScreen(props) {
         market, sp, msLeft, tickSpeed, phase,
         leaderboard = [], spHistory = [], allBids = [], players = [],
         onNextPhase, onExecuteEvent, onPauseToggle, paused, freqBreachSec,
-        onSetManualNiv, lastRes, daOrderBook, daResult, idOrderBook, spContracts, currentSp, simRes
+        onSetManualNiv, lastRes, daOrderBook, daResult, idOrderBook, spContracts, currentSp, simRes, ready
     } = props;
 
     const [selectedEvent, setSelectedEvent] = useState(null);
@@ -250,20 +250,22 @@ export default function NESOScreen(props) {
     if (freq < FREQ_FAIL_LO || freq > FREQ_FAIL_HI) notices.push({ icon: "⚠", color: "#ef4444", text: `Frequency deviation: ${freq.toFixed(2)} Hz` });
 
     // ── Merit order from REAL bids ────────────────────────────────────────────
-    const botBids = market?.actual?.bots || [];
-    const activeBids = [...allBids, ...botBids]
+    // Only use allBids, bots are fully removed
+    const activeBids = allBids
         .filter(b => b.side === (isShort ? "offer" : "bid"))
         .sort((a, b) => isShort ? +a.price - +b.price : +b.price - +a.price);
 
-    // Merit bars (top 4 asset types by MW)
+    // Merit bars: aggregate by asset type and sort by price (not volume) - matches real GB market
     const meritByType = {};
     activeBids.forEach(b => {
         const t = b.asset || "Other";
-        if (!meritByType[t]) meritByType[t] = { mw: 0, color: genMixColors[t] || "#4d7a96" };
+        if (!meritByType[t]) meritByType[t] = { mw: 0, price: +b.price || 0, color: genMixColors[t] || "#4d7a96" };
         meritByType[t].mw += +b.mw || 0;
+        // Track min price for this asset type (for merit order ranking)
+        meritByType[t].price = Math.min(meritByType[t].price, +b.price || 999999);
     });
     const meritOrder = Object.entries(meritByType)
-        .sort((a, b) => b[1].mw - a[1].mw)
+        .sort((a, b) => isShort ? a[1].price - b[1].price : b[1].price - a[1].price)  // Sort by price like real GB market
         .slice(0, 4)
         .map(([t, d]) => ({ label: genMixLabels[t] || t, value: Math.round(d.mw), color: d.color }));
 
@@ -522,7 +524,7 @@ export default function NESOScreen(props) {
                 simRes={lastRes || simRes}
             />
 
-            {/* Live Merit Order */}
+            {/* Live Merit Order - Only live values, no fallback/defaults */}
             <div style={{ ...s.panel, flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexShrink: 0 }}>
                     <div>
@@ -547,11 +549,19 @@ export default function NESOScreen(props) {
                 </div>
 
                 <div style={{ flex: 1, overflowY: "auto" }}>
-                    {activeBids.length === 0 ? (
-                        <div style={{ textAlign: "center", color: "#4d7a96", padding: 40, fontSize: 12 }}>
-                            No {isShort ? "offers" : "bids"} submitted yet.
+                    {/* Show warning if GunDB is not connected */}
+                    {ready !== true && (
+                        <div style={{ textAlign: "center", color: "#f0455a", padding: 40, fontSize: 12, fontWeight: 700 }}>
+                            GunDB is not connected. Live values unavailable.
                         </div>
-                    ) : (
+                    )}
+                    {ready === true && activeBids.length === 0 && (
+                        <div style={{ textAlign: "center", color: "#f0455a", padding: 40, fontSize: 12, fontWeight: 700 }}>
+                            No live player bids found in this room. Waiting for players to join and submit offers.<br />
+                            The table will update automatically when live data is available.
+                        </div>
+                    )}
+                    {ready === true && activeBids.length > 0 && (
                         <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "right", fontSize: 11 }}>
                             <thead>
                                 <tr style={{ color: "#4d7a96", borderBottom: "1px solid #1a3045" }}>
@@ -580,8 +590,8 @@ export default function NESOScreen(props) {
                                                     }} />
                                                 </td>
                                             )}
-                                            <td style={{ textAlign: "left", padding: "8px 4px", color: b.isBot ? "#4d7a96" : "#ddeeff", fontWeight: b.isBot ? 400 : 700 }}>
-                                                {b.isBot ? "🤖 " : ""}{b.name || b.id}
+                                            <td style={{ textAlign: "left", padding: "8px 4px", color: "#ddeeff", fontWeight: 700 }}>
+                                                {b.name || b.id}
                                             </td>
                                             <td style={{ textAlign: "left", padding: "8px 4px", color: b.col || "#4d7a96" }}>
                                                 {b.asset}

@@ -11,7 +11,7 @@ import { updateSystemState, computePlayerSystemImpact, updatePlayerImpact, build
  * useGameEngine: Encapsulates core game loop logic
  * 
  * Handles:
- * - Phase transitions (DA → ID → BM → SETTLED → DA)
+ * - Phase transitions (DA → ID → BM_GATE → DELIVERY → SETTLEMENT → DA)
  * - Market clearing and physics updates
  * - Settlement calculations
  * - Player state updates
@@ -89,8 +89,8 @@ export function useGameEngine(appState, playerRefs, setters, callbacks) {
       }
     }
 
-    // --- BM CLOSED (Actual Delivery) ---
-    if (oldPhase === "BM") {
+    // --- BM GATE CLOSED → DELIVERY (Actual Physical Dispatch) ---
+    if (oldPhase === "BM_GATE") {
       const bmArr = [...Object.values(orderbookSnap || {}).filter(b => b && b.mw)];
       const res = clearBM(bmArr, market.actual);
       // Diagnostic log for BM phase
@@ -109,7 +109,6 @@ export function useGameEngine(appState, playerRefs, setters, callbacks) {
         const next = { ...prev };
         if (!next[oldSp]) next[oldSp] = {};
         for (const b of res.accepted) {
-          if (b.isBot && b.id.startsWith("BOT_")) continue;
           if (!next[oldSp][b.id]) next[oldSp][b.id] = {};
           next[oldSp][b.id].bmAccepted = { mw: b.mwAcc, price: res.cp, rev: b.revenue };
           if (b.id === pid && startupDeduction > 0) {
@@ -125,13 +124,13 @@ export function useGameEngine(appState, playerRefs, setters, callbacks) {
     }
 
     // --- SETTLEMENT: Calculate imbalance and update scores ---
-    if (oldPhase === "SETTLED" && market.actual) {
+    if (oldPhase === "SETTLEMENT" && market.actual) {
       const myC = spContracts[oldSp]?.[pid] || {};
       const contractPosMw = contractPosition || 0;
       const actualPosMw = myC.bmAccepted ? (market.actual.isShort ? myC.bmAccepted.mw : -myC.bmAccepted.mw) : 0;
 
-      // Diagnostic log for SETTLED phase
-      console.log('[GameEngine] SETTLED phase:', { myC, contractPosMw, actualPosMw, marketActual: market.actual });
+      // Diagnostic log for SETTLEMENT phase
+      console.log('[GameEngine] SETTLEMENT phase:', { myC, contractPosMw, actualPosMw, marketActual: market.actual });
 
       let intendedPhysical = myC.bmAccepted
         ? (market.actual.isShort ? myC.bmAccepted.mw : -myC.bmAccepted.mw)

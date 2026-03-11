@@ -24,6 +24,11 @@ app.use((req, res, next) => {
 
 app.use(Gun.serve);
 
+// Explicit /gun route handler to avoid 404
+app.get('/gun', (req, res) => {
+    res.send('Gun relay endpoint is running');
+});
+
 const server = app.listen(PORT, () => {
     console.log(`⚡ Gun relay server running on http://localhost:${PORT}/gun`);
 });

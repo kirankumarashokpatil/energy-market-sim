@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import SharedLayout from './SharedLayout';
 import { ASSETS, SP_DURATION_H, SYSTEM_PARAMS } from '../../shared/constants';
 import { Tip } from '../shared/Tip'; // Added tooltip support
+import DACurveSubmission from '../DACurveSubmission';
+import DAResultsTable from '../shared/DAResultsTable';
 
 // Formatting
 const f0 = p => Number(p).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -14,8 +16,12 @@ export default function BessScreen(props) {
         daMyBid, setDaMyBid, daSubmitted, onDaSubmit,
         idMyOrder, setIdMyOrder, idSubmitted, onIdSubmit,
         spContracts, pid, spHistory, contractPosition, cash, daCash,
-        physicalState // Added physically simulated state (for cycle counts / temperature future use)
+        physicalState, // Added physically simulated state (for cycle counts / temperature future use)
+        daCurveSegments, onDaCurveSubmit, daAuctionResults, forecasts,
+        positions, daPositions
     } = props;
+    const [useCurveMode, setUseCurveMode] = useState(true);
+    const daAlreadyCleared = daAuctionResults && daAuctionResults.prices && daAuctionResults.prices.length > 0;
 
     // Lookup Asset details
     const def = ASSETS[assetKey] || ASSETS.BESS_S;
@@ -207,46 +213,97 @@ export default function BessScreen(props) {
 
             {isDa && (
                 <>
-                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.5 }}>Forward scheduling. Cannot bid larger volumes than physical {def.maxMW} MW capability.</p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-                        <button onClick={() => setDaMyBid(b => ({ ...b, side: "buy" }))} disabled={daSubmitted} style={{ padding: "8px", background: daMyBid.side === "buy" ? "#1de98b22" : "#102332", border: `1px solid ${daMyBid.side === "buy" ? "#1de98b" : "#1a3045"}`, borderRadius: 6, color: daMyBid.side === "buy" ? "#1de98b" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>BUY (Charge Battery)</button>
-                        <button onClick={() => setDaMyBid(b => ({ ...b, side: "sell" }))} disabled={daSubmitted} style={{ padding: "8px", background: daMyBid.side === "sell" ? "#38c0fc22" : "#102332", border: `1px solid ${daMyBid.side === "sell" ? "#38c0fc" : "#1a3045"}`, borderRadius: 6, color: daMyBid.side === "sell" ? "#38c0fc" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>SELL (Discharge Battery)</button>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: "auto" }}>
-                        <div>
-                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>VOLUME (MW)</label>
-                            <input type="number" value={daMyBid.mw} disabled={daSubmitted} onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>PRICE LIMIT £/MWh</label>
-                            <input type="number" value={daMyBid.price} disabled={daSubmitted} onChange={e => setDaMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#f5b222", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
-                        </div>
-                    </div>
-                    {((daMyBid.side === "buy" && daMyBid.mw > sustainedChargeMw) || (daMyBid.side === "sell" && daMyBid.mw > sustainedDischargeMw)) && ( // Alert if we breach physics
-                        <div style={{ fontSize: 8.5, color: "#f0455a", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Warning: Bid exceeds valid physics envelope. Imbalance may trigger.</div>
-                    )}
-                    {/* SoC Commitment Warning: DA + ID combined cannot exceed available energy */}
-                    {(() => {
-                        const daCommitmentMwh = (daMyBid.side === "buy" ? -daMyBid.mw : daMyBid.mw) * SP_DURATION_H; // negative = charging
-                        const idCommitmentMwh = (idMyOrder.side === "buy" ? -idMyOrder.mw : idMyOrder.mw) * SP_DURATION_H;
-                        const totalMwh = daCommitmentMwh + idCommitmentMwh;
-                        const chargeExceeded = daMyBid.side === "buy" && totalMwh < -maxChargeMwh; // Going too negative (charging too much)
-                        const dischargeExceeded = daMyBid.side === "sell" && totalMwh > maxDischargeMwh; // Going too positive (discharging too much)
-                        return (chargeExceeded || dischargeExceeded) ? (
-                            <div style={{ fontSize: 8.5, color: "#f5b222", fontWeight: 700, padding: "6px 8px", textAlign: "center", background: "#1f1009", borderRadius: 4, marginTop: 8 }}>
-                                ⚠️ DA+ID Energy Risk: {chargeExceeded ? `Will exceed charge headroom (${f1(maxChargeMwh)} MWh available).` : `Will exceed discharge capacity (${f1(maxDischargeMwh)} MWh available).`}
+                    {daAlreadyCleared ? (
+                        <DAResultsTable
+                            daAuctionResults={daAuctionResults}
+                            daPositions={daPositions}
+                            positions={positions}
+                            pid={pid}
+                            currentSp={sp}
+                        />
+                    ) : (
+                        <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                <p style={{ fontSize: 9, color: "#4d7a96", lineHeight: 1.5, margin: 0, flex: 1 }}>Forward scheduling. Cannot bid larger volumes than physical {def.maxMW} MW capability.</p>
+                                <button onClick={() => setUseCurveMode(m => !m)} style={{ padding: '3px 8px', background: '#0c1c2a', border: '1px solid #1a3045', borderRadius: 4, color: '#4d7a96', fontSize: 8, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                    {useCurveMode ? 'Simple Mode' : 'EPEX Curve Mode'}
+                                </button>
                             </div>
-                        ) : null;
-                    })()}
-                    <button data-testid="bess-submit-da" onClick={onDaSubmit} disabled={daSubmitted || !daMyBid.price} style={{ marginTop: Math.max(0, 16 - (((daMyBid.side === "buy" && daMyBid.mw > sustainedChargeMw) || (daMyBid.side === "sell" && daMyBid.mw > sustainedDischargeMw)) ? 16 : 0)), width: "100%", padding: "12px", background: daSubmitted ? "#1a3045" : "#f5b222", border: "none", borderRadius: 6, color: daSubmitted ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: daSubmitted ? "default" : "pointer" }}>
-                        {daSubmitted ? "✓ DA SCHEDULE LOCKED" : "SUBMIT DA SCHEDULE →"}
-                    </button>
+                            {useCurveMode ? (
+                                <DACurveSubmission
+                                    onSubmit={onDaCurveSubmit}
+                                    forecastPrices={(forecasts || []).map(f => f?.price || 55)}
+                                    initialSegments={daCurveSegments || undefined}
+                                    assetMaxMW={def.maxMW || 100}
+                                    daSubmitted={daSubmitted}
+                                />
+                            ) : (
+                                <>
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                                        <button onClick={() => setDaMyBid(b => ({ ...b, side: "buy" }))} style={{ padding: "8px", background: daMyBid.side === "buy" ? "#1de98b22" : "#102332", border: `1px solid ${daMyBid.side === "buy" ? "#1de98b" : "#1a3045"}`, borderRadius: 6, color: daMyBid.side === "buy" ? "#1de98b" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>BUY (Charge Battery)</button>
+                                        <button onClick={() => setDaMyBid(b => ({ ...b, side: "sell" }))} style={{ padding: "8px", background: daMyBid.side === "sell" ? "#38c0fc22" : "#102332", border: `1px solid ${daMyBid.side === "sell" ? "#38c0fc" : "#1a3045"}`, borderRadius: 6, color: daMyBid.side === "sell" ? "#38c0fc" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>SELL (Discharge Battery)</button>
+                                    </div>
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: "auto" }}>
+                                        <div>
+                                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>VOLUME (MW)</label>
+                                            <input type="number" value={daMyBid.mw} onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>PRICE LIMIT £/MWh</label>
+                                            <input type="number" value={daMyBid.price} onChange={e => setDaMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#f5b222", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                        </div>
+                                    </div>
+                                    {((daMyBid.side === "buy" && daMyBid.mw > sustainedChargeMw) || (daMyBid.side === "sell" && daMyBid.mw > sustainedDischargeMw)) && (
+                                        <div style={{ fontSize: 8.5, color: "#f0455a", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Warning: Bid exceeds valid physics envelope. Imbalance may trigger.</div>
+                                    )}
+                                    {(() => {
+                                        const daCommitmentMwh = (daMyBid.side === "buy" ? -daMyBid.mw : daMyBid.mw) * SP_DURATION_H;
+                                        const idCommitmentMwh = (idMyOrder.side === "buy" ? -idMyOrder.mw : idMyOrder.mw) * SP_DURATION_H;
+                                        const totalMwh = daCommitmentMwh + idCommitmentMwh;
+                                        const chargeExceeded = daMyBid.side === "buy" && totalMwh < -maxChargeMwh;
+                                        const dischargeExceeded = daMyBid.side === "sell" && totalMwh > maxDischargeMwh;
+                                        return (chargeExceeded || dischargeExceeded) ? (
+                                            <div style={{ fontSize: 8.5, color: "#f5b222", fontWeight: 700, padding: "6px 8px", textAlign: "center", background: "#1f1009", borderRadius: 4, marginTop: 8 }}>
+                                                ⚠️ DA+ID Energy Risk: {chargeExceeded ? `Will exceed charge headroom (${f1(maxChargeMwh)} MWh available).` : `Will exceed discharge capacity (${f1(maxDischargeMwh)} MWh available).`}
+                                            </div>
+                                        ) : null;
+                                    })()}
+                                    <button data-testid="bess-submit-da" onClick={onDaSubmit} disabled={!daMyBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: "#f5b222", border: "none", borderRadius: 6, color: "#050e16", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>
+                                        {daSubmitted ? "UPDATE DA SCHEDULE →" : "SUBMIT DA SCHEDULE →"}
+                                    </button>
+                                </>
+                            )}
+                        </>
+                    )}
                 </>
             )}
 
             {isId && (
                 <>
-                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.5 }}>Adjust DA state. Counter-trades will modify net physical notification (PN).</p>
+                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 8, lineHeight: 1.5 }}>Adjust DA state. Counter-trades will modify net physical notification (PN).</p>
+                    {/* Remaining capacity banner */}
+                    {(() => {
+                        const daVol = Math.abs(daPositions?.[sp - 1] || 0);
+                        const pm = daAuctionResults?.pmax?.[pid]?.[sp - 1] || def.maxMW || 0;
+                        const remaining = Math.max(0, pm - daVol);
+                        const currentPos = contractPosition;
+                        return (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
+                                <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>DA CONTRACT</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: "#f5b222" }}>{currentPos >= 0 ? "+" : ""}{f0(currentPos)}MW</div>
+                                </div>
+                                <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>PHYSICAL MAX</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: "#ddeeff" }}>{f0(pm)}MW</div>
+                                </div>
+                                <div style={{ background: remaining > 0 ? "#38c0fc11" : "#0c1c2a", border: `1px solid ${remaining > 0 ? "#38c0fc33" : "#1a3045"}`, borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>REMAINING CAP</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: remaining > 0 ? "#38c0fc" : "#2a5570" }}>{f0(remaining)}MW</div>
+                                </div>
+                            </div>
+                        );
+                    })()}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
                         <button onClick={() => setIdMyOrder(b => ({ ...b, side: "buy" }))} disabled={idSubmitted} style={{ padding: "8px", background: idMyOrder.side === "buy" ? "#1de98b22" : "#102332", border: `1px solid ${idMyOrder.side === "buy" ? "#1de98b" : "#1a3045"}`, borderRadius: 6, color: idMyOrder.side === "buy" ? "#1de98b" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>BUY (Charge Battery)</button>
                         <button onClick={() => setIdMyOrder(b => ({ ...b, side: "sell" }))} disabled={idSubmitted} style={{ padding: "8px", background: idMyOrder.side === "sell" ? "#38c0fc22" : "#102332", border: `1px solid ${idMyOrder.side === "sell" ? "#38c0fc" : "#1a3045"}`, borderRadius: 6, color: idMyOrder.side === "sell" ? "#38c0fc" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>SELL (Discharge Battery)</button>

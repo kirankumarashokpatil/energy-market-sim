@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import SharedLayout from './SharedLayout';
 import { ASSETS, SYSTEM_PARAMS } from '../../shared/constants';
 import { Tip } from '../shared/Tip';
+import DAResultsTable from '../shared/DAResultsTable';
 
 // Formatting
 const f0 = p => Number(p).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -14,8 +15,10 @@ export default function DsrScreen(props) {
         daMyBid, setDaMyBid, daSubmitted, onDaSubmit,
         idMyOrder, setIdMyOrder, idSubmitted, onIdSubmit,
         spContracts, pid, contractPosition,
-        physicalState // From App.jsx tracking DSR timers
+        physicalState, // From App.jsx tracking DSR timers
+        positions, daPositions, daAuctionResults
     } = props;
+    const daAlreadyCleared = daAuctionResults && daAuctionResults.prices && daAuctionResults.prices.length > 0;
 
     // Lookup Asset details
     const def = ASSETS[assetKey] || ASSETS.DSR;
@@ -155,33 +158,68 @@ export default function DsrScreen(props) {
 
             {isDa && (
                 <>
-                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.5 }}>Schedule future factory demand drops. This creates a virtual generation volume.</p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-                        <button onClick={() => setDaMyBid(b => ({ ...b, side: "buy" }))} disabled={daSubmitted || reboundActive} style={{ padding: "8px", background: daMyBid.side === "buy" ? "#38c0fc22" : "#102332", border: `1px solid ${daMyBid.side === "buy" ? "#38c0fc" : "#1a3045"}`, borderRadius: 6, color: daMyBid.side === "buy" ? "#38c0fc" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>BUY (Consume More / Rebound)</button>
-                        <button onClick={() => setDaMyBid(b => ({ ...b, side: "sell" }))} disabled={daSubmitted || reboundActive} style={{ padding: "8px", background: daMyBid.side === "sell" ? "#1de98b22" : "#102332", border: `1px solid ${daMyBid.side === "sell" ? "#1de98b" : "#1a3045"}`, borderRadius: 6, color: daMyBid.side === "sell" ? "#1de98b" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>SELL (Curtail Demand)</button>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: "auto" }}>
-                        <div>
-                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>VOLUME (MW)</label>
-                            <input type="number" max={def.maxMW} value={daMyBid.mw} disabled={daSubmitted || reboundActive} onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>PRICE LIMIT £/MWh</label>
-                            <input type="number" value={daMyBid.price} disabled={daSubmitted || reboundActive} onChange={e => setDaMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#f5b222", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
-                        </div>
-                    </div>
-                    {reboundActive && daMyBid.side !== "buy" && (
-                        <div style={{ fontSize: 8.5, color: "#f0455a", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Rebound active: You physically MUST consume energy. Bidding to curtail is dangerous.</div>
+                    {daAlreadyCleared ? (
+                        <DAResultsTable
+                            daAuctionResults={daAuctionResults}
+                            daPositions={daPositions}
+                            positions={positions}
+                            pid={pid}
+                            currentSp={sp}
+                        />
+                    ) : (
+                        <>
+                            <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.5 }}>Schedule future factory demand drops. This creates a virtual generation volume.</p>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                                <button onClick={() => setDaMyBid(b => ({ ...b, side: "buy" }))} disabled={reboundActive} style={{ padding: "8px", background: daMyBid.side === "buy" ? "#38c0fc22" : "#102332", border: `1px solid ${daMyBid.side === "buy" ? "#38c0fc" : "#1a3045"}`, borderRadius: 6, color: daMyBid.side === "buy" ? "#38c0fc" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>BUY (Consume More / Rebound)</button>
+                                <button onClick={() => setDaMyBid(b => ({ ...b, side: "sell" }))} disabled={reboundActive} style={{ padding: "8px", background: daMyBid.side === "sell" ? "#1de98b22" : "#102332", border: `1px solid ${daMyBid.side === "sell" ? "#1de98b" : "#1a3045"}`, borderRadius: 6, color: daMyBid.side === "sell" ? "#1de98b" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>SELL (Curtail Demand)</button>
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: "auto" }}>
+                                <div>
+                                    <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>VOLUME (MW)</label>
+                                    <input type="number" max={def.maxMW} value={daMyBid.mw} disabled={reboundActive} onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>PRICE LIMIT £/MWh</label>
+                                    <input type="number" value={daMyBid.price} disabled={reboundActive} onChange={e => setDaMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#f5b222", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                </div>
+                            </div>
+                            {reboundActive && daMyBid.side !== "buy" && (
+                                <div style={{ fontSize: 8.5, color: "#f0455a", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Rebound active: You physically MUST consume energy. Bidding to curtail is dangerous.</div>
+                            )}
+                            <button data-testid="dsr-submit-da" onClick={onDaSubmit} disabled={!daMyBid.price} style={{ marginTop: Math.max(0, 16 - (reboundActive && daMyBid.side !== "buy" ? 16 : 0)), width: "100%", padding: "12px", background: "#f5b222", border: "none", borderRadius: 6, color: "#050e16", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>
+                                {daSubmitted ? "UPDATE DA SCHEDULE →" : "SUBMIT DA SCHEDULE →"}
+                            </button>
+                        </>
                     )}
-                    <button data-testid="dsr-submit-da" onClick={onDaSubmit} disabled={daSubmitted || !daMyBid.price} style={{ marginTop: Math.max(0, 16 - (reboundActive && daMyBid.side !== "buy" ? 16 : 0)), width: "100%", padding: "12px", background: daSubmitted ? "#1a3045" : "#f5b222", border: "none", borderRadius: 6, color: daSubmitted ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: daSubmitted ? "default" : "pointer" }}>
-                        {daSubmitted ? "✓ DA SCHEDULE LOCKED" : "SUBMIT DA SCHEDULE →"}
-                    </button>
                 </>
             )}
 
             {isId && (
                 <>
-                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.5 }}>Adjust factory schedule closer to delivery. Useful for triggering voluntary rebounds before BM.</p>
+                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 8, lineHeight: 1.5 }}>Adjust factory schedule closer to delivery. Useful for triggering voluntary rebounds before BM.</p>
+                    {/* Remaining capacity banner */}
+                    {(() => {
+                        const daVol = Math.abs(daPositions?.[sp - 1] || 0);
+                        const pm = daAuctionResults?.pmax?.[pid]?.[sp - 1] || def.maxMW || 0;
+                        const remaining = Math.max(0, pm - daVol);
+                        const currentPos = contractPosition;
+                        return (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
+                                <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>DA CONTRACT</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: "#f5b222" }}>{currentPos >= 0 ? "+" : ""}{f0(currentPos)}MW</div>
+                                </div>
+                                <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>FLEX CAPACITY</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: "#ddeeff" }}>{f0(pm)}MW</div>
+                                </div>
+                                <div style={{ background: remaining > 0 ? "#38c0fc11" : "#0c1c2a", border: `1px solid ${remaining > 0 ? "#38c0fc33" : "#1a3045"}`, borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>REMAINING CAP</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: remaining > 0 ? "#38c0fc" : "#2a5570" }}>{f0(remaining)}MW</div>
+                                </div>
+                            </div>
+                        );
+                    })()}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
                         <button onClick={() => setIdMyOrder(b => ({ ...b, side: "buy" }))} disabled={idSubmitted || reboundActive} style={{ padding: "8px", background: idMyOrder.side === "buy" ? "#38c0fc22" : "#102332", border: `1px solid ${idMyOrder.side === "buy" ? "#38c0fc" : "#1a3045"}`, borderRadius: 6, color: idMyOrder.side === "buy" ? "#38c0fc" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>BUY (Consume More / Rebound)</button>
                         <button onClick={() => setIdMyOrder(b => ({ ...b, side: "sell" }))} disabled={idSubmitted || reboundActive} style={{ padding: "8px", background: idMyOrder.side === "sell" ? "#1de98b22" : "#102332", border: `1px solid ${idMyOrder.side === "sell" ? "#1de98b" : "#1a3045"}`, borderRadius: 6, color: idMyOrder.side === "sell" ? "#1de98b" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>SELL (Curtail Demand)</button>
@@ -217,11 +255,11 @@ export default function DsrScreen(props) {
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: "auto" }}>
                         <div>
                             <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>FLEX VOLUME (MW)</label>
-                            <input type="number" max={def.maxMW} value={myBid.mw} disabled={submitted || phase !== "BM" || reboundActive} onChange={e => setMyBid(b => ({ ...b, mw: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'", borderColor: (myBid.mw > def.maxMW) ? "#f0455a" : "#234159" }} />
+                            <input data-testid="dsr-bm-mw" type="number" max={def.maxMW} value={myBid.mw} disabled={submitted || phase !== "BM" || reboundActive} onChange={e => setMyBid(b => ({ ...b, mw: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'", borderColor: (myBid.mw > def.maxMW) ? "#f0455a" : "#234159" }} />
                         </div>
                         <div>
                             <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>BID PRICE £/MWh</label>
-                            <input type="number" value={myBid.price} placeholder={`~£${f0((isShort ? ssp * SYSTEM_PARAMS.bidStrategyMultipliers.dsrBM.sspMultiplier : sbp * SYSTEM_PARAMS.bidStrategyMultipliers.dsrBM.sbpMultiplier))}`} disabled={submitted || phase !== "BM" || reboundActive} onChange={e => setMyBid(b => ({ ...b, price: e.target.value, side: isShort ? "bid" : "offer" }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#1de98b", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                            <input data-testid="dsr-bm-price" type="number" value={myBid.price} placeholder={`~£${f0((isShort ? ssp * SYSTEM_PARAMS.bidStrategyMultipliers.dsrBM.sspMultiplier : sbp * SYSTEM_PARAMS.bidStrategyMultipliers.dsrBM.sbpMultiplier))}`} disabled={submitted || phase !== "BM" || reboundActive} onChange={e => setMyBid(b => ({ ...b, price: e.target.value, side: isShort ? "bid" : "offer" }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#1de98b", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
                         </div>
                     </div>
                     {reboundActive && (

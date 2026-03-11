@@ -3,6 +3,7 @@ import SharedLayout from './SharedLayout';
 import { Tip } from '../shared/Tip';
 import { SYSTEM_PARAMS } from '../../shared/constants';
 import MarketOverviewPanel from '../shared/MarketOverviewPanel';
+import DACurveSubmission from '../DACurveSubmission';
 
 const f0 = p => Number(p).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -71,10 +72,12 @@ export default function TraderScreen(props) {
         daMyBid, setDaMyBid, daSubmitted, onDaSubmit,
         idMyOrder, setIdMyOrder, idSubmitted, onIdSubmit,
         spContracts, pid, cash, contractPosition,
-        forecasts, publishedForecast, daOrderBook, daResult, idOrderBook, bmOrderBook, simRes, currentSp
+        forecasts, publishedForecast, daOrderBook, daResult, idOrderBook, bmOrderBook, simRes, currentSp,
+        daCurveSegments, onDaCurveSubmit
     } = props;
 
     const [tab, setTab] = useState("DA");
+    const [useExpertMode, setUseExpertMode] = useState(false); // Expert curve mode for traders
 
     const currentPos = contractPosition || 0;
 
@@ -201,8 +204,8 @@ export default function TraderScreen(props) {
                             <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.4 }}>Take a purely financial view on the market before physical delivery.</p>
 
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                                <ActionButton onClick={() => setDaMyBid(b => ({ ...b, side: "buy" }))} disabled={daSubmitted || phase !== "DA"} active={daMyBid.side === "buy"} activeBg="#1de98b22" activeBorder="#1de98b" activeColor="#1de98b" label="BUY (Go Long)" />
-                                <ActionButton onClick={() => setDaMyBid(b => ({ ...b, side: "sell" }))} disabled={daSubmitted || phase !== "DA"} active={daMyBid.side === "sell"} activeBg="#f0455a22" activeBorder="#f0455a" activeColor="#f0455a" label="SELL (Go Short)" />
+                                <ActionButton onClick={() => setDaMyBid(b => ({ ...b, side: "buy" }))} disabled={phase !== "DA"} active={daMyBid.side === "buy"} activeBg="#1de98b22" activeBorder="#1de98b" activeColor="#1de98b" label="BUY (Go Long)" />
+                                <ActionButton onClick={() => setDaMyBid(b => ({ ...b, side: "sell" }))} disabled={phase !== "DA"} active={daMyBid.side === "sell"} activeBg="#f0455a22" activeBorder="#f0455a" activeColor="#f0455a" label="SELL (Go Short)" />
                             </div>
 
                             <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
@@ -220,7 +223,7 @@ export default function TraderScreen(props) {
                                                 <input
                                                     type="number"
                                                     value={daMyBid.mw}
-                                                    disabled={daSubmitted || phase !== "DA"}
+                                                    disabled={phase !== "DA"}
                                                     onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value }))}
                                                     style={{
                                                         width: "100%",
@@ -244,12 +247,12 @@ export default function TraderScreen(props) {
                                 </div>
                                 <div style={{ flex: 1 }}>
                                     <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 4, display: "block" }}>PRICE LIMIT £/MWh</label>
-                                    <input type="number" value={daMyBid.price} disabled={daSubmitted || phase !== "DA"} onChange={e => setDaMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "8px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#f5b222", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                    <input type="number" value={daMyBid.price} disabled={phase !== "DA"} onChange={e => setDaMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "8px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#f5b222", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
                                 </div>
                             </div>
 
-                            <button onClick={onDaSubmit} disabled={daSubmitted || phase !== "DA" || !daMyBid.price || (() => { const priceLimit = parseFloat(daMyBid.price) || 50; const maxSafeMW = Math.floor(margin / (priceLimit * 0.5)); const currentMW = parseFloat(daMyBid.mw) || 0; return currentMW > maxSafeMW && daMyBid.mw !== ""; })()} style={{ width: "100%", padding: "12px", background: daSubmitted || phase !== "DA" ? "#1a3045" : "#f5b222", border: "none", borderRadius: 8, color: daSubmitted || phase !== "DA" ? "#4d7a96" : "#050e16", fontWeight: 900, fontSize: 12, cursor: daSubmitted || phase !== "DA" ? "default" : "pointer", marginBottom: 16 }}>
-                                {phase !== "DA" ? "AWAITING DA PHASE..." : daSubmitted ? "✓ POSITION LOCKED" : "SUBMIT SPECULATIVE POSITION →"}
+                            <button onClick={onDaSubmit} disabled={phase !== "DA" || !daMyBid.price || (() => { const priceLimit = parseFloat(daMyBid.price) || 50; const maxSafeMW = Math.floor(margin / (priceLimit * 0.5)); const currentMW = parseFloat(daMyBid.mw) || 0; return currentMW > maxSafeMW && daMyBid.mw !== ""; })()} style={{ width: "100%", padding: "12px", background: phase !== "DA" ? "#1a3045" : "#f5b222", border: "none", borderRadius: 8, color: phase !== "DA" ? "#4d7a96" : "#050e16", fontWeight: 900, fontSize: 12, cursor: phase !== "DA" ? "default" : "pointer", marginBottom: 16 }}>
+                                {phase !== "DA" ? "AWAITING DA PHASE..." : daSubmitted ? "UPDATE POSITION →" : "SUBMIT SPECULATIVE POSITION →"}
                             </button>
                         </div>
 

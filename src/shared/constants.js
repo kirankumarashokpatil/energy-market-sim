@@ -88,6 +88,13 @@ export const FORGIVENESS = {
     wearMultiplier: 0.5,           // half wear cost
 };
 
+// ─── ROOM STATES ───
+export const ROOM_STATES = {
+    LOBBY: "LOBBY",           // NESO created room, in lobby view
+    READY_TO_START: "READY_TO_START",  // All required roles present, can start game
+    RUNNING: "RUNNING",       // Game is active
+};
+
 // ─── GAME MODES (§4.2 Progressive Difficulty) ───
 export const GAME_MODES = {
     TUTORIAL: { id: "TUTORIAL", name: "Tutorial", emoji: "📖", desc: "BM only, 1 asset — learn the physics", markets: ["bm"], multiAsset: false, forgiveness: true },
@@ -135,13 +142,6 @@ export const ROLES = {
         canOwnAssets: false, canTrade: true, hasDemand: false, startCapital: 5000, marginFloor: 0,
         hint: "You have no physical assets, so you MUST exit your contract by BM gate or face imbalance penalties. Maximum leverage: use DA as a spread trade, then close in ID.",
         guide: "Traders are market-makers: you profit from spreads, not from being right on direction. DA/ID liquidity attracts you, but BM is a penalty box. Risk: margin call if prices move against you.",
-    },
-    INTERCONNECTOR: {
-        id: "INTERCONNECTOR", name: "Interconnector", emoji: "🔌",
-        desc: "Cross-border HVDC link — arbitrage European prices. WIN: Buy cheap, sell dear across borders.",
-        canOwnAssets: true, canTrade: true, hasDemand: false, isSystem: true,
-        hint: "[System Role] Interconnectors trade on continental price spreads. If GB is short (high NIV), you want to export at high SBP. If GB is long (low NIV), you import at low SSP.",
-        guide: "Interconnectors have unlimited export/import capacity but limited by HVDC thermal ratings. They naturally balance UK without being asked, earning arbitrage spreads.",
     },
     DSR: {
         id: "DSR", name: "Demand Controller", emoji: "🏗️",
@@ -346,13 +346,7 @@ export const EVENTS = [
     { id: "WIND_LOW", name: "Wind Drop", emoji: "💨", col: "#f0455a", niv: -180, pd: +22, prob: .10, desc: "Wind fell sharply — grid needs more generation" },
 ];
 
-// ─── BOT ROSTER ───
-export const BOT_ROSTER = [
-    { name: "GridCo", asset: "BESS_M" }, { name: "NatPower", asset: "OCGT" },
-    { name: "SSE Flex", asset: "HYDRO" }, { name: "Centrica", asset: "DSR" },
-    { name: "Drax Base", asset: "CCGT" }, { name: "RWE Wind", asset: "WIND" },
-    { name: "EDF Nuclear", asset: "NUCLEAR" }, { name: "LightSource", asset: "SOLAR" },
-];
+
 
 // ─── TUTORIAL STEPS (§9.1) ───
 export const TUTORIAL_STEPS = [
@@ -408,9 +402,5 @@ export const SCORING_CONFIG = {
         accuracyWeight: 0.50,    // Settlement accuracy: correct imbalance calculations
         timelinessWeight: 0.30,  // Timeliness: settlements processed promptly
         transparencyWeight: 0.20, // Transparency: clear audit trail
-    },
-    INTERCONNECTOR: {
-        breakpoints: [[0, 20], [5000, 50], [15000, 70], [30000, 85], [50000, 100]],
-        primaryWeight: 0.80,
     },
 };

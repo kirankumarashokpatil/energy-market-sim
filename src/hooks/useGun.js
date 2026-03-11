@@ -5,10 +5,17 @@ export function useGun() {
     const gunRef = useRef(null);
     const [ready, setReady] = useState(false);
     useEffect(() => {
-        if (window.Gun) { gunRef.current = new window.Gun(GUN_PEERS); setReady(true); return; }
+        const relay = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GUN_RELAY)
+            ? import.meta.env.VITE_GUN_RELAY
+            : (typeof window !== 'undefined' && window.location && window.location.hostname)
+                ? `${window.location.origin}/gun`
+                : null;
+        const peers = relay ? [relay] : GUN_PEERS;
+
+        if (window.Gun) { gunRef.current = new window.Gun(peers); setReady(true); return; }
         const s = document.createElement("script");
         s.src = "https://cdn.jsdelivr.net/npm/gun/gun.js";
-        s.onload = () => { gunRef.current = new window.Gun(GUN_PEERS); setReady(true); };
+        s.onload = () => { gunRef.current = new window.Gun(peers); setReady(true); };
         s.onerror = () => setReady("error");
         document.head.appendChild(s);
     }, []);

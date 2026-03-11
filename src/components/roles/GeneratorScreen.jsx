@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import SharedLayout from './SharedLayout';
 import { ASSETS, SP_DURATION_H, SYSTEM_PARAMS } from '../../shared/constants';
 import { Tip } from '../shared/Tip'; // Added tooltips
+import DACurveSubmission from '../DACurveSubmission';
+import DAResultsTable from '../shared/DAResultsTable';
 
 // Formatting
 const f0 = p => Number(p).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -14,8 +16,12 @@ export default function GeneratorScreen(props) {
         daMyBid, setDaMyBid, daSubmitted, onDaSubmit,
         idMyOrder, setIdMyOrder, idSubmitted, onIdSubmit,
         spContracts, pid, spHistory, allBids, contractPosition, cash, daCash,
-        physicalState // New
+        physicalState, // New
+        daCurveSegments, onDaCurveSubmit, daAuctionResults, forecasts,
+        positions, daPositions
     } = props;
+    const [useCurveMode, setUseCurveMode] = useState(true); // Default to EPEX curve mode
+    const daAlreadyCleared = daAuctionResults && daAuctionResults.prices && daAuctionResults.prices.length > 0;
 
     // Lookup Asset details
     const def = ASSETS[assetKey] || ASSETS.BESS_S;
@@ -222,29 +228,83 @@ export default function GeneratorScreen(props) {
 
             {isDa && (
                 <>
-                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.5 }}>Forward market. Secure baseload ahead of time to lock in price certainty. <strong style={{ color: "#f5b222" }}>Offline plants can bid DA to signal startup.</strong></p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: "auto" }}>
-                        <div>
-                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>OFFER VOLUME (MW)</label>
-                            <input type="number" value={daMyBid.mw} disabled={daSubmitted} onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>PRICE LIMIT £/MWh</label>
-                            <input type="number" value={daMyBid.price} disabled={daSubmitted} onChange={e => setDaMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#f5b222", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
-                        </div>
-                    </div>
-                    {daMyBid.mw > 0 && daMyBid.mw < (def?.minMw || 0) && (
-                        <div style={{ fontSize: 8.5, color: "#f5b222", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Bidding below Min Stable ({def.minMw}MW) will trip the plant offline.</div>
+                    {daAlreadyCleared ? (
+                        /* DA already cleared for all 48 SPs — show per-SP results table */
+                        <DAResultsTable
+                            daAuctionResults={daAuctionResults}
+                            daPositions={daPositions}
+                            positions={positions}
+                            pid={pid}
+                            currentSp={sp}
+                        />
+                    ) : (
+                        /* DA not yet cleared — show submission UI */
+                        <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                <p style={{ fontSize: 9, color: "#4d7a96", lineHeight: 1.5, margin: 0, flex: 1 }}>Forward market. Secure baseload ahead of time to lock in price certainty.</p>
+                                <button onClick={() => setUseCurveMode(m => !m)} style={{ padding: '3px 8px', background: '#0c1c2a', border: '1px solid #1a3045', borderRadius: 4, color: '#4d7a96', fontSize: 8, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                    {useCurveMode ? 'Simple Mode' : 'EPEX Curve Mode'}
+                                </button>
+                            </div>
+                            {useCurveMode ? (
+                                <DACurveSubmission
+                                    onSubmit={onDaCurveSubmit}
+                                    forecastPrices={(forecasts || []).map(f => f?.price || 55)}
+                                    initialSegments={daCurveSegments || undefined}
+                                    assetMaxMW={def.maxMW || 100}
+                                    daSubmitted={daSubmitted}
+                                />
+                            ) : (
+                                <>
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: "auto" }}>
+                                        <div>
+                                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>OFFER VOLUME (MW)</label>
+                                            <input type="number" value={daMyBid.mw} onChange={e => setDaMyBid(b => ({ ...b, mw: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#ddeeff", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: 9, color: "#4d7a96", marginBottom: 6, display: "block" }}>PRICE LIMIT £/MWh</label>
+                                            <input type="number" value={daMyBid.price} onChange={e => setDaMyBid(b => ({ ...b, price: e.target.value }))} style={{ width: "100%", padding: "10px", background: "#102332", border: "1px solid #234159", borderRadius: 6, color: "#f5b222", fontSize: 14, fontFamily: "'JetBrains Mono'" }} />
+                                        </div>
+                                    </div>
+                                    {daMyBid.mw > 0 && daMyBid.mw < (def?.minMw || 0) && (
+                                        <div style={{ fontSize: 8.5, color: "#f5b222", fontWeight: 700, padding: "6px 0", textAlign: "center" }}>⚠️ Bidding below Min Stable ({def.minMw}MW) will trip the plant offline.</div>
+                                    )}
+                                    <button data-testid="gen-submit-da-offer" onClick={onDaSubmit} disabled={!daMyBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: "#f5b222", border: "none", borderRadius: 6, color: "#050e16", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>
+                                        {daSubmitted ? "UPDATE DA OFFER →" : "SUBMIT DA OFFER →"}
+                                    </button>
+                                </>
+                            )}
+                        </>
                     )}
-                    <button data-testid="gen-submit-da-offer" onClick={onDaSubmit} disabled={daSubmitted || !daMyBid.price} style={{ marginTop: 16, width: "100%", padding: "12px", background: daSubmitted ? "#1a3045" : "#f5b222", border: "none", borderRadius: 6, color: daSubmitted ? "#4d7a96" : "#050e16", fontWeight: 800, fontSize: 12, cursor: daSubmitted ? "default" : "pointer" }}>
-                        {daSubmitted ? "✓ DA OFFER LOCKED" : "SUBMIT DA OFFER →"}
-                    </button>
                 </>
             )}
 
             {isId && (
                 <>
-                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 16, lineHeight: 1.5 }}>Adjust your DA position to reflect updated wind forecasts & plant availability.</p>
+                    <p style={{ fontSize: 9, color: "#4d7a96", marginBottom: 8, lineHeight: 1.5 }}>Adjust your DA position to reflect updated wind forecasts & plant availability.</p>
+                    {/* Remaining capacity banner */}
+                    {(() => {
+                        const daVol = Math.abs(daPositions?.[sp - 1] || 0);
+                        const pm = daAuctionResults?.pmax?.[pid]?.[sp - 1] || def.maxMW || 0;
+                        const remaining = Math.max(0, pm - daVol);
+                        const currentPos = contractPosition;
+                        return (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
+                                <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>DA CONTRACT</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: "#f5b222" }}>{currentPos >= 0 ? "+" : ""}{f0(currentPos)}MW</div>
+                                </div>
+                                <div style={{ background: "#0c1c2a", border: "1px solid #1a3045", borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>PHYSICAL MAX</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: "#ddeeff" }}>{f0(pm)}MW</div>
+                                </div>
+                                <div style={{ background: remaining > 0 ? "#38c0fc11" : "#0c1c2a", border: `1px solid ${remaining > 0 ? "#38c0fc33" : "#1a3045"}`, borderRadius: 5, padding: "6px 8px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 7, color: "#4d7a96" }}>REMAINING CAP</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 800, color: remaining > 0 ? "#38c0fc" : "#2a5570" }}>{f0(remaining)}MW</div>
+                                </div>
+                            </div>
+                        );
+                    })()}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
                         <button onClick={() => setIdMyOrder(b => ({ ...b, side: "buy" }))} disabled={idSubmitted} style={{ padding: "8px", background: idMyOrder.side === "buy" ? "#38c0fc22" : "#102332", border: `1px solid ${idMyOrder.side === "buy" ? "#38c0fc" : "#1a3045"}`, borderRadius: 6, color: idMyOrder.side === "buy" ? "#38c0fc" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>BUY (Go Long)</button>
                         <button onClick={() => setIdMyOrder(b => ({ ...b, side: "sell" }))} disabled={idSubmitted} style={{ padding: "8px", background: idMyOrder.side === "sell" ? "#f0455a22" : "#102332", border: `1px solid ${idMyOrder.side === "sell" ? "#f0455a" : "#1a3045"}`, borderRadius: 6, color: idMyOrder.side === "sell" ? "#f0455a" : "#4d7a96", fontSize: 10, fontWeight: 800 }}>SELL (Go Short)</button>

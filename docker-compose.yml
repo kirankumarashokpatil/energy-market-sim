@@ -1,0 +1,22 @@
+services:
+  gridforge-app:
+    build: .
+    image: gridforge-app
+    container_name: gridforge-app-container
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+  gundb:
+    build:
+      context: .
+      dockerfile: Dockerfile.gun
+    image: gundb-relay
+    container_name: gundb-relay-container
+    ports:
+      - "8765:8765"
+    restart: unless-stopped
+    volumes:
+      - gundb_data:/data
+
+volumes:
+  gundb_data:

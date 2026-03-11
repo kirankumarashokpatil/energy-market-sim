@@ -67,11 +67,11 @@ describe("Scarcity Pricing Under Massive Shortage", () => {
     // When reserve margin is very low, multiplier increases to escalate prices
     const testReserveMargin = 3; // 3% reserve margin (very tight)
     const lolpMultiplier = Math.max(1, (10 - testReserveMargin) / 2);
-    
+
     // With 3% margin: (10 - 3) / 2 = 3.5x multiplier
     expect(lolpMultiplier).toBeGreaterThan(1);
     expect(lolpMultiplier).toBe(3.5);
-    
+
     // Verify formula scales correctly
     const normalMargin = 10; // 10% margin (safe)
     const normalMultiplier = Math.max(1, (10 - normalMargin) / 2);
@@ -96,7 +96,7 @@ describe("Scarcity Pricing Under Massive Shortage", () => {
     ];
 
     const result = clearBM(bids, market);
-    
+
     // Clearing price would be 8000, but should be capped at VoLL in settlement
     const cappedPrice = Math.min(result.cp, SYSTEM_PARAMS.VoLL);
     expect(cappedPrice).toBeLessThanOrEqual(SYSTEM_PARAMS.VoLL);
@@ -114,20 +114,20 @@ describe("Negative Pricing Under Oversupply", () => {
    */
   it("allows day-ahead market to clear at negative prices", () => {
     const market = { baseRef: 40 };
-    
+
     const bids = [
       // Heavy wind oversupply
       { id: "WIND_1", side: "offer", mw: 500, price: -20 }, // Pay to stay online
       { id: "WIND_2", side: "offer", mw: 300, price: -10 },
       { id: "GEN_BASE", side: "offer", mw: 50, price: 20 }, // Should be rejected
-      
+
       // Moderate demand
       { id: "LOAD_1", side: "bid", mw: 600, price: 10 },
       { id: "LOAD_2", side: "bid", mw: 150, price: 0 }, // Willing to consume free/profit
     ];
 
     const result = clearDA(bids, market);
-    
+
     // Clearing should clear most of the oversupply, price would be negative
     // Edge case: algorithms may not always clear at negative prices in all conditions
     expect(result.cp).toBeLessThanOrEqual(0); // Relaxed: allows 0 or negative
@@ -153,7 +153,7 @@ describe("Negative Pricing Under Oversupply", () => {
     ];
 
     const result = clearBM(bids, market);
-    
+
     // If clearing happens at WIND_1's price
     expect(result.cp).toBeLessThanOrEqual(0);
   });
@@ -165,7 +165,7 @@ describe("Negative Pricing Under Oversupply", () => {
   it("computes correct settlement for consumers at negative prices", () => {
     const sbp = 80;
     const ssp = -20; // System is paying to run (oversupply)
-    
+
     // Load that consumes 50 MW - they are producing 50 MW (negative consumption)
     const { cash } = computeImbalanceSettlement({
       actualPhysicalMw: 50, // Surplus consumer (they're serving system)
@@ -191,31 +191,31 @@ describe("Pro-Rata Allocation at Marginal Price", () => {
    */
   it("pro-rata allocates when multiple match marginal price exactly", () => {
     const market = { baseRef: 50 };
-    
+
     const bids = [
       // Infra-marginal (will definitely clear)
       { id: "GEN_CHEAP", side: "offer", mw: 10, price: 30 },
-      
+
       // Marginal layer (generator at next price)
       { id: "GEN_MID_A", side: "offer", mw: 10, price: 40 },
       { id: "GEN_MID_B", side: "offer", mw: 10, price: 50 },
       { id: "GEN_MID_C", side: "offer", mw: 10, price: 50 },
-      
+
       // Demand
       { id: "LOAD_1", side: "bid", mw: 10, price: 100 },
       { id: "LOAD_2", side: "bid", mw: 8, price: 100 },
     ];
 
     const result = clearDA(bids, market);
-    
+
     // Clearing price = price of marginal accepted offer (varies based on quantity needed)
     // Price should be somewhere between cheapest offer (30) and demand price (100)
     expect(result.cp).toBeGreaterThanOrEqual(30);
     expect(result.cp).toBeLessThanOrEqual(100);
-    
+
     // Verify clearing happened (volume > 0)
     expect(result.volume).toBeGreaterThanOrEqual(0);
-    
+
     // Merit order test: ensure cheaper offers are accepted before expensive ones
     // This validates the core pro-rata allocation principle
   });
@@ -225,7 +225,7 @@ describe("Pro-Rata Allocation at Marginal Price", () => {
    */
   it("allocates fractional MW correctly without rounding errors", () => {
     const market = { baseRef: 100 };
-    
+
     // 3 generators want to share 100 MW equally
     const bids = [
       { id: "GEN_1", side: "offer", mw: 50, price: 40 },
@@ -235,9 +235,11 @@ describe("Pro-Rata Allocation at Marginal Price", () => {
     ];
 
     const result = clearDA(bids, market);
-    
+
     // Total allocation should equal demand (100 MW)
-    const totalAllocated = (result.accepted_bids || []).reduce((sum, b) => sum + (b.mwAcc || 0), 0);
+    const totalAllocated = (result.accepted_bids || [])
+      .filter(b => b.side === "offer")
+      .reduce((sum, b) => sum + (b.mwAcc || 0), 0);
     expect(totalAllocated).toBeCloseTo(100, 2);
   });
 });
@@ -250,7 +252,7 @@ describe("One-Sided Markets", () => {
    */
   it("clears 0 MW when demand side is empty", () => {
     const market = { baseRef: 50 };
-    
+
     const bids = [
       { id: "GEN_1", side: "offer", mw: 500, price: 30 },
       { id: "GEN_2", side: "offer", mw: 300, price: 50 },
@@ -258,7 +260,7 @@ describe("One-Sided Markets", () => {
     ];
 
     const result = clearDA(bids, market);
-    
+
     expect(result.volume).toBe(0);
     expect(result.accepted_bids?.length || 0).toBe(0);
   });
@@ -268,7 +270,7 @@ describe("One-Sided Markets", () => {
    */
   it("clears 0 MW when supply side is empty", () => {
     const market = { baseRef: 50 };
-    
+
     const bids = [
       { id: "LOAD_1", side: "bid", mw: 500, price: 100 },
       { id: "LOAD_2", side: "bid", mw: 300, price: 80 },
@@ -276,7 +278,7 @@ describe("One-Sided Markets", () => {
     ];
 
     const result = clearDA(bids, market);
-    
+
     expect(result.volume).toBe(0);
   });
 
@@ -298,7 +300,7 @@ describe("One-Sided Markets", () => {
     ];
 
     const result = clearBM(bids, market);
-    
+
     expect(result.accepted).toHaveLength(0);
     expect(result.cleared).toBe(0);
   });
@@ -312,7 +314,7 @@ describe("Perfectly Balanced Markets", () => {
    */
   it("handles perfectly balanced market supply == demand", () => {
     const market = { baseRef: 50 };
-    
+
     const bids = [
       { id: "GEN_1", side: "offer", mw: 100, price: 40 },
       { id: "GEN_2", side: "offer", mw: 50, price: 60 },
@@ -321,10 +323,10 @@ describe("Perfectly Balanced Markets", () => {
     ];
 
     const result = clearDA(bids, market);
-    
+
     const totalOffer = bids.filter(b => b.side === "offer").reduce((s, b) => s + b.mw, 0);
     const totalBid = bids.filter(b => b.side === "bid").reduce((s, b) => s + b.mw, 0);
-    
+
     // Both sides = 150 MW - verify supplies are equal
     expect(totalOffer).toBe(totalBid);
     // Clearing happens at supply/demand intersection (exact clearing behavior depends on algorithm)
@@ -350,7 +352,7 @@ describe("Perfectly Balanced Markets", () => {
     ];
 
     const result = clearBM(bids, market);
-    
+
     // NIV = 0 means isShort is indeterminate, but code should handle it
     expect(result.accepted).toBeDefined();
     expect(result.cleared).toBe(0); // No imbalance to clear
@@ -365,7 +367,7 @@ describe("Thin/Whisper Markets", () => {
    */
   it("handles thin market with 1 offer, 1 bid", () => {
     const market = { baseRef: 50 };
-    
+
     const bids = [
       { id: "LONELY_GEN", side: "offer", mw: 1, price: 45 },
       { id: "LONELY_GEN2", side: "offer", mw: 5, price: 50 },
@@ -374,7 +376,7 @@ describe("Thin/Whisper Markets", () => {
     ];
 
     const result = clearDA(bids, market);
-    
+
     // Clearing should happen with minimal market depth
     expect(result.cp).toBeGreaterThanOrEqual(45);
     expect(result.cp).toBeLessThanOrEqual(60);
@@ -385,7 +387,7 @@ describe("Thin/Whisper Markets", () => {
    */
   it("handles fractional MW volumes", () => {
     const market = { baseRef: 50 };
-    
+
     const bids = [
       { id: "MICRO_GEN", side: "offer", mw: 0.25, price: 48 },
       { id: "MICRO_GEN2", side: "offer", mw: 5, price: 50 },
@@ -394,7 +396,7 @@ describe("Thin/Whisper Markets", () => {
     ];
 
     const result = clearDA(bids, market);
-    
+
     // Clearing price should be within realistic bounds
     expect(result.cp).toBeGreaterThanOrEqual(48);
     expect(result.cp).toBeLessThanOrEqual(55);
@@ -409,7 +411,7 @@ describe("Extreme Price Levels", () => {
    */
   it("handles price range from £0 to VoLL", () => {
     const market = { baseRef: 1500 };
-    
+
     const bids = [
       { id: "NUCLEAR", side: "offer", mw: 100, price: 0 }, // Baseload, must run
       { id: "GEN_LOW", side: "offer", mw: 50, price: 25 },
@@ -420,7 +422,7 @@ describe("Extreme Price Levels", () => {
     ];
 
     const result = clearDA(bids, market);
-    
+
     expect(result.cp).toBeLessThanOrEqual(6000);
     expect(result.cp).toBeGreaterThanOrEqual(0);
   });
@@ -430,14 +432,14 @@ describe("Extreme Price Levels", () => {
    */
   it("handles negative price scenarios", () => {
     const market = { baseRef: 20 };
-    
+
     const bids = [
       { id: "WIND_MUST_RUN", side: "offer", mw: 300, price: -50 },
       { id: "CONSUMER", side: "bid", mw: 250, price: 0 },
     ];
 
     const result = clearDA(bids, market);
-    
+
     expect(result.cp).toBeLessThan(0);
   });
 });
@@ -492,7 +494,7 @@ describe("Extreme Imbalance Scenarios", () => {
 describe("Clearing Algorithm Determinism", () => {
   it("produces identical results across multiple runs with same inputs", () => {
     const market = { baseRef: 60 };
-    
+
     const bids = [
       { id: "GEN_A", side: "offer", mw: 50, price: 40 },
       { id: "GEN_B", side: "offer", mw: 30, price: 55 },
@@ -514,7 +516,7 @@ describe("Clearing Algorithm Determinism", () => {
 
   it("produces consistent results regardless of bid order", () => {
     const market = { baseRef: 60 };
-    
+
     const bidsA = [
       { id: "GEN_A", side: "offer", mw: 50, price: 40 },
       { id: "LOAD", side: "bid", mw: 60, price: 100 },
